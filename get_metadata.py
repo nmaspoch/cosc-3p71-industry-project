@@ -112,9 +112,7 @@ if __name__ == "__main__":
     access_token = os.getenv("ACCESS_TOKEN")
     
     # List all your sequence keys in order
-    sequence_keys = [
-        
-    ]
+    sequence_keys = os.getenv("SEQUENCE_KEYS").split(',')
     
     current_index = 0
     csv_file = "mapillary_data/combined_metadata.csv"
@@ -124,7 +122,7 @@ if __name__ == "__main__":
     # interval = 3  # for 3 second gaps
     # interval = 4  # for 4 second gaps
     # interval = 5  # for 5 second gaps
-    interval = 3  # Change this value as needed
+    interval = int(os.getenv("INTERVAL"))  # Change this value as needed
     
     # Delete old combined file if starting fresh
     if os.path.exists(csv_file):
