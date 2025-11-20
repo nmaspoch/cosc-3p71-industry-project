@@ -2,6 +2,12 @@
 
 ### Start label-studio
 
+If you do not have label-studio installed, run the following command:
+
+```
+$ pip install label-studio
+```
+
 Go into mapillary_images folder, create a terminal and start CORS Server
 
 ```
