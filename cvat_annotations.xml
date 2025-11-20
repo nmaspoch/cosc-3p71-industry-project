@@ -1,8 +1,5 @@
 <?xml version="1.0" ?>
 <annotations>
-  <meta>
-    <job/>
-  </meta>
   <image id="0" name="0000_733815632400785.jpg" width="1920" height="1080">
     <points label="metadata" occluded="0" points="10.0,10.0" z_order="0">
       <attribute name="image_id">="733815632400785"</attribute>

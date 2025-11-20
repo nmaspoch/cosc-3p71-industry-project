@@ -64,8 +64,6 @@ def get_sequence_metadata(sequence_key, access_token, csv_file="mapillary_data/c
                 "longitude": coords[0],
                 "direction": data.get("compass_angle"),
                 "timestamp": data.get("captured_at"),
-                "road_condition": "",
-                "problem_type": "",
                 "sequence_id": sequence_key  # Track which sequence this came from
             }
             
@@ -84,7 +82,7 @@ def get_sequence_metadata(sequence_key, access_token, csv_file="mapillary_data/c
     fieldnames = [
         "filename", "image_id", "index",
         "latitude", "longitude", "direction", "timestamp",
-        "road_condition", "problem_type", "sequence_id"
+        "road_condition", "sequence_id"
     ]
     
     # Append to CSV

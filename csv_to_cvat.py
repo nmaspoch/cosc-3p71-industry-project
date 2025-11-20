@@ -5,10 +5,6 @@ from xml.dom import minidom
 def csv_to_cvat_xml(csv_file, output_xml):
     root = ET.Element('annotations')
     
-    # Add meta information
-    meta = ET.SubElement(root, 'meta')
-    job = ET.SubElement(meta, 'job')
-    
     with open(csv_file, 'r', encoding='utf-8-sig') as f:
         reader = csv.DictReader(f)
         
@@ -22,14 +18,13 @@ def csv_to_cvat_xml(csv_file, output_xml):
             image.set('height', '1080')
             
             # Create a small point annotation to hold metadata
-            # This will be visible in CVAT with all the metadata
             points = ET.SubElement(image, 'points')
             points.set('label', 'metadata')
             points.set('occluded', '0')
-            points.set('points', '10.0,10.0')  # Small point in top-left corner
+            points.set('points', '10.0,10.0')
             points.set('z_order', '0')
             
-            # Add metadata as attributes to the point
+            # Add metadata as attributes (WITHOUT road_condition)
             metadata = {
                 'image_id': row.get('image_id', ''),
                 'latitude': row.get('latitude', ''),
@@ -37,12 +32,10 @@ def csv_to_cvat_xml(csv_file, output_xml):
                 'direction': row.get('direction', ''),
                 'timestamp': row.get('timestamp', ''),
                 'sequence_id': row.get('sequence_id', ''),
-                'road_condition': row.get('road_condition', ''),
-                'problem_type': row.get('problem_type', '')
             }
             
             for name, value in metadata.items():
-                value = value.strip()
+                value = str(value).strip()
                 if value:
                     attr = ET.SubElement(points, 'attribute')
                     attr.set('name', name)

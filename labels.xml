@@ -1,0 +1,139 @@
+[
+  {
+    "name": "metadata",
+    "id": 6457473,
+    "color": "#bdb95f",
+    "type": "any",
+    "attributes": [
+      {
+        "id": 2157785,
+        "name": "image_id",
+        "input_type": "text",
+        "mutable": false,
+        "values": [
+          ""
+        ],
+        "default_value": ""
+      },
+      {
+        "id": 2157786,
+        "name": "latitude",
+        "input_type": "text",
+        "mutable": false,
+        "values": [
+          ""
+        ],
+        "default_value": ""
+      },
+      {
+        "id": 2157787,
+        "name": "longitude",
+        "input_type": "text",
+        "mutable": false,
+        "values": [
+          ""
+        ],
+        "default_value": ""
+      },
+      {
+        "id": 2157788,
+        "name": "direction",
+        "input_type": "text",
+        "mutable": false,
+        "values": [
+          ""
+        ],
+        "default_value": ""
+      },
+      {
+        "id": 2157789,
+        "name": "timestamp",
+        "input_type": "text",
+        "mutable": false,
+        "values": [
+          ""
+        ],
+        "default_value": ""
+      },
+      {
+        "id": 2157790,
+        "name": "sequence_id",
+        "input_type": "text",
+        "mutable": false,
+        "values": [
+          ""
+        ],
+        "default_value": ""
+      }
+    ]
+  },
+  {
+    "name": "road_condition",
+    "id": 6457474,
+    "color": "#08d8f1",
+    "type": "tag",
+    "attributes": [
+      {
+        "id": 2157792,
+        "name": "condition",
+        "input_type": "select",
+        "mutable": false,
+        "values": [
+          "safe",
+          "minor_issues",
+          "major_problems"
+        ],
+        "default_value": "safe"
+      }
+    ]
+  },
+  {
+    "name": "pothole",
+    "id": 6457475,
+    "color": "#ff0000",
+    "type": "rectangle",
+    "attributes": []
+  },
+  {
+    "name": "crack",
+    "id": 6457476,
+    "color": "#ff8800",
+    "type": "rectangle",
+    "attributes": []
+  },
+  {
+    "name": "flooding",
+    "id": 6457477,
+    "color": "#0088ff",
+    "type": "rectangle",
+    "attributes": []
+  },
+  {
+    "name": "construction",
+    "id": 6457478,
+    "color": "#ffaa00",
+    "type": "rectangle",
+    "attributes": []
+  },
+  {
+    "name": "debris",
+    "id": 6457479,
+    "color": "#888888",
+    "type": "rectangle",
+    "attributes": []
+  },
+  {
+    "name": "sign_signal",
+    "id": 6457480,
+    "color": "#94a42f",
+    "type": "rectangle",
+    "attributes": []
+  },
+  {
+    "name": "intersection_crosswalk",
+    "id": 6457481,
+    "color": "#802040",
+    "type": "rectangle",
+    "attributes": []
+  }
+]
