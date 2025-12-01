@@ -20,7 +20,7 @@ def get_sequence_metadata(sequence_key, access_token, csv_file="combined_metadat
     Returns:
         Number of images actually selected and added to CSV
     """
-    os.makedirs(os.path.dirname(csv_file), exist_ok=True)
+    # os.makedirs(os.path.dirname(csv_file), exist_ok=True)
     
     url = f"https://graph.mapillary.com/image_ids"
     params = {

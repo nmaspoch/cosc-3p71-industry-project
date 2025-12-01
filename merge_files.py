@@ -43,6 +43,25 @@ df['road_condition'] = df['index'].map(road_conditions)
 # Add the problem_types column
 df['problem_types'] = df['index'].map(problem_types)
 
+# Convert direction to cardinal direction
+def get_cardinal_direction(bearing):
+    """
+    Convert bearing to 8-point cardinal direction.
+    Returns: N, NE, E, SE, S, SW, W, NW
+    """
+    if pd.isna(bearing):
+        return None
+    
+    try:
+        bearing = float(bearing) % 360  # Normalize first
+        directions = ['N', 'NE', 'E', 'SE', 'S', 'SW', 'W', 'NW']
+        index = round(bearing / 45) % 8
+        return directions[index]
+    except (ValueError, TypeError):
+        return None
+
+df['direction'] = df['direction'].apply(get_cardinal_direction)
+
 # Save the updated CSV
 df.to_csv('final_metadata.csv', index=False)
 
@@ -50,5 +69,8 @@ print("CSV file updated successfully!")
 print(f"\nTotal rows: {len(df)}")
 print(f"Rows with road_condition: {df['road_condition'].notna().sum()}")
 print(f"Rows with problem_types: {df['problem_types'].notna().sum()}")
+print(f"Rows with valid direction: {df['direction'].notna().sum()}")
+print("\nDirection distribution:")
+print(df['direction'].value_counts().sort_index())
 print("\nSample of updated data:")
-print(df[df['problem_types'].notna()][['index', 'filename', 'road_condition', 'problem_types']].head(10))
+print(df[['index', 'filename', 'direction', 'road_condition', 'problem_types']].head(10))
