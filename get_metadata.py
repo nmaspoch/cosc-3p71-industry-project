@@ -6,7 +6,7 @@ import csv
 
 load_dotenv()
 
-def get_sequence_metadata(sequence_key, access_token, csv_file="mapillary_data/combined_metadata.csv", start_index=0, interval=3):
+def get_sequence_metadata(sequence_key, access_token, csv_file="combined_metadata.csv", start_index=0, interval=3):
     """
     Fetch sequence metadata and append to CSV file.
     
@@ -16,8 +16,11 @@ def get_sequence_metadata(sequence_key, access_token, csv_file="mapillary_data/c
         csv_file: Output CSV file (will append if exists)
         start_index: Starting index for this sequence (continues from previous)
         interval: Skip images to get one every N seconds (default: 3)
+    
+    Returns:
+        Number of images actually selected and added to CSV
     """
-    os.makedirs(os.path.dirname(csv_file), exist_ok=True)
+    # os.makedirs(os.path.dirname(csv_file), exist_ok=True)
     
     url = f"https://graph.mapillary.com/image_ids"
     params = {
@@ -31,6 +34,7 @@ def get_sequence_metadata(sequence_key, access_token, csv_file="mapillary_data/c
     print(f"Sampling every {interval} images (keeping ~{len(image_ids)//interval} images)")
     
     metadata_list = []
+    selected_count = 0  # Counter for selected images only
     
     # Only process every Nth image
     for i, image_data in enumerate(image_ids):
@@ -52,8 +56,8 @@ def get_sequence_metadata(sequence_key, access_token, csv_file="mapillary_data/c
             
             coords = data.get("geometry", {}).get("coordinates", [None, None])
             
-            # Use continuous index across all sequences
-            continuous_index = start_index + i
+            # Use continuous index based on selected images only
+            continuous_index = start_index + selected_count
             filename = f"{continuous_index:04d}_{image_id}.jpg"
             
             metadata = {
@@ -68,7 +72,8 @@ def get_sequence_metadata(sequence_key, access_token, csv_file="mapillary_data/c
             }
             
             metadata_list.append(metadata)
-            print(f"Processed {len(metadata_list)} selected images (original index: {i})")
+            selected_count += 1  # Increment only after successful selection
+            print(f"Processed {selected_count} selected images (original position: {i})")
             
             sleep(0.05)
             
@@ -82,7 +87,7 @@ def get_sequence_metadata(sequence_key, access_token, csv_file="mapillary_data/c
     fieldnames = [
         "filename", "image_id", "index",
         "latitude", "longitude", "direction", "timestamp",
-        "road_condition", "sequence_id"
+        "road_condition", "problem_types", "sequence_id"
     ]
     
     # Append to CSV
@@ -97,12 +102,12 @@ def get_sequence_metadata(sequence_key, access_token, csv_file="mapillary_data/c
         for row in metadata_list:
             row_copy = row.copy()
             # Format both image_id and timestamp as text for Excel
-            row_copy['image_id'] = f'="{row["image_id"]}"'
-            row_copy['timestamp'] = f'="{row["timestamp"]}"'
+            # row_copy['image_id'] = row["image_id"]
+            # row_copy['timestamp'] = row["timestamp"]
             writer.writerow(row_copy)
     
     print(f"Appended {len(metadata_list)} rows to {csv_file}")
-    return len(metadata_list)
+    return selected_count  # Return count of selected images, not total
 
 
 # Usage: Run multiple sequences one after another
@@ -113,7 +118,7 @@ if __name__ == "__main__":
     sequence_keys = os.getenv("SEQUENCE_KEYS").split(',')
     
     current_index = 0
-    csv_file = "mapillary_data/combined_metadata.csv"
+    csv_file = "combined_metadata.csv"
     
     # Set your desired interval (3-5 seconds between images)
     # If Mapillary captures ~1 image per second, use:
@@ -134,7 +139,7 @@ if __name__ == "__main__":
             print(f"{'='*60}")
             
             count = get_sequence_metadata(seq_key, access_token, csv_file, current_index, interval)
-            current_index += count
+            current_index += count  # Update based on actual selected images
     
     print(f"\n{'='*60}")
     print(f"✓ Combined metadata saved to: {csv_file}")

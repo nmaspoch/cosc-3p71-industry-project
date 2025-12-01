@@ -6,7 +6,7 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-def download_images_from_metadata(metadata_csv="mapillary_data/combined_metadata.csv", 
+def download_images_from_metadata(metadata_csv="combined_metadata.csv", 
                                    access_token=None,
                                    output_dir="mapillary_images", 
                                    use_original=False):
@@ -15,7 +15,7 @@ def download_images_from_metadata(metadata_csv="mapillary_data/combined_metadata
     This ensures filenames match the metadata exactly.
     """
     
-    os.makedirs(output_dir, exist_ok=True)
+    # os.makedirs(output_dir, exist_ok=True)
     
     # Read the combined metadata
     with open(metadata_csv, 'r', encoding='utf-8-sig') as f:
@@ -90,7 +90,7 @@ def download_images_from_metadata(metadata_csv="mapillary_data/combined_metadata
 
 if __name__ == "__main__":
     download_images_from_metadata(
-        metadata_csv="mapillary_data/combined_metadata.csv",
+        metadata_csv="combined_metadata.csv",
         access_token=os.getenv("ACCESS_TOKEN"),
         use_original=False  # Set to True for original resolution
     )

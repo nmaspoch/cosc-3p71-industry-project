@@ -69,12 +69,12 @@
   },
   {
     "name": "road_condition",
-    "id": 6457474,
+    "id": 6463844,
     "color": "#08d8f1",
     "type": "tag",
     "attributes": [
       {
-        "id": 2157792,
+        "id": 2160267,
         "name": "condition",
         "input_type": "select",
         "mutable": false,
@@ -89,50 +89,64 @@
   },
   {
     "name": "pothole",
-    "id": 6457475,
+    "id": 6463845,
     "color": "#ff0000",
     "type": "rectangle",
     "attributes": []
   },
   {
     "name": "crack",
-    "id": 6457476,
+    "id": 6463846,
     "color": "#ff8800",
     "type": "rectangle",
     "attributes": []
   },
   {
     "name": "flooding",
-    "id": 6457477,
+    "id": 6463847,
     "color": "#0088ff",
     "type": "rectangle",
     "attributes": []
   },
   {
     "name": "construction",
-    "id": 6457478,
+    "id": 6463848,
     "color": "#ffaa00",
     "type": "rectangle",
     "attributes": []
   },
   {
     "name": "debris",
-    "id": 6457479,
+    "id": 6463849,
     "color": "#888888",
     "type": "rectangle",
     "attributes": []
   },
   {
-    "name": "sign_signal",
-    "id": 6457480,
+    "name": "intersection",
+    "id": 6463851,
+    "color": "#802040",
+    "type": "rectangle",
+    "attributes": []
+  },
+  {
+    "name": "crosswalk",
+    "id": 6463872,
+    "color": "#8c3653",
+    "type": "rectangle",
+    "attributes": []
+  },
+  {
+    "name": "sign",
+    "id": 6463873,
     "color": "#94a42f",
     "type": "rectangle",
     "attributes": []
   },
   {
-    "name": "intersection_crosswalk",
-    "id": 6457481,
-    "color": "#802040",
+    "name": "signal",
+    "id": 6463874,
+    "color": "#767b52",
     "type": "rectangle",
     "attributes": []
   }
