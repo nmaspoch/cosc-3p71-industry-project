@@ -1,0 +1,20 @@
+path: dataset
+
+
+train: images/train
+val: images/val
+test: images/test
+
+nc: 10
+
+names:
+  0: road_condition
+  1: pothole
+  2: crack
+  3: flooding
+  4: construction
+  5: debris
+  6: intersection
+  7: crosswalk
+  8: sign
+  9: signal
