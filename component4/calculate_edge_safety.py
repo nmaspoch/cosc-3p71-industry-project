@@ -1,16 +1,18 @@
 import json
 import pickle
-import networkx as nx
 import pandas as pd
 import numpy as np
 from pathlib import Path
 from math import radians, sin, cos, sqrt, atan2
 import sys
-import torch
+from pathlib import Path
 from ultralytics import YOLO
 
+parent_dir = Path(__file__).parent.parent
+sys.path.insert(0, str(parent_dir))
+
 # Import graph building functions
-from graph import build_weighted_road_network_graph, update_edge_safety_from_yolo, normalize_road_conditions
+from component2.graph import build_weighted_road_network_graph, update_edge_safety_from_yolo, normalize_road_conditions
 
 def calculate_haversine_distance(lat1, lon1, lat2, lon2, earth_radius_m=6371000):
     """Calculate Haversine distance between two points (in meters)."""
