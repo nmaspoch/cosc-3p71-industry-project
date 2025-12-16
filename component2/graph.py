@@ -311,6 +311,33 @@ def visualize_graph(G, filename='road_network_graph_weighted.png'):
         print(f"\nStatic visualization saved to {filename}")
         plt.close()
 
+def update_edge_safety_from_yolo(G, edge_safety_scores):
+    for (u, v), prob_score in edge_safety_scores.items():
+        if G.has_edge(u, v):
+            if prob_score < 0.3:
+                condition = 'safe'
+                penalty = 1.0
+            elif prob_score < 0.7:
+                condition = 'minor_issues'
+                penalty = 1.5
+            else:
+                condition = 'major_issues'
+                penalty = 3.0
+            
+            raw_dist = G[u][v]['raw_distance']
+            new_weight = raw_dist * penalty
+            
+            G[u][v]['weight'] = new_weight
+            G[u][v]['safety_penalty'] = penalty
+            G[u][v]['condition'] = condition
+            G[u][v]['yolo_probability'] = prob_score
+            
+            if G.has_edge(v, u):
+                G[v][u]['weight'] = new_weight
+                G[v][u]['safety_penalty'] = penalty
+                G[v][u]['condition'] = condition
+                G[v][u]['yolo_probability'] = prob_score
+
 # --- Main Execution Logic ---
 
 def main():
