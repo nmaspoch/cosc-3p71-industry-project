@@ -8,9 +8,6 @@ import sys
 from pathlib import Path
 from ultralytics import YOLO
 
-parent_dir = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(parent_dir))
-
 # Import graph building functions
 from component2.graph import build_weighted_road_network_graph, update_edge_safety_from_yolo, normalize_road_conditions
 
