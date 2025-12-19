@@ -8,6 +8,10 @@ import sys
 from pathlib import Path
 from ultralytics import YOLO
 
+project_root = Path(__file__).resolve().parent.parent
+if str(project_root) not in sys.path:
+    sys.path.insert(0, str(project_root))
+
 # Import graph building functions
 from component2.graph import build_weighted_road_network_graph, update_edge_safety_from_yolo, normalize_road_conditions
 

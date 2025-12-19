@@ -38,7 +38,9 @@ def load_graph():
 @st.cache_data
 def load_metadata():
     """Load the original metadata"""
-    return pd.read_csv('../final_metadata.csv')
+    # Use absolute path relative to project root
+    metadata_path = Path(__file__).resolve().parent.parent / 'final_metadata.csv'
+    return pd.read_csv(metadata_path)
 
 # ============================================================================
 # NAVIGATION FUNCTIONS

@@ -4,6 +4,11 @@ import folium
 import pandas as pd
 import numpy as np
 from pathlib import Path
+import sys
+
+project_root = Path(__file__).resolve().parent.parent
+if str(project_root) not in sys.path:
+    sys.path.insert(0, str(project_root))
 
 # Import from graph.py
 from component2.graph import update_edge_safety_from_yolo, calculate_haversine_distance
@@ -14,15 +19,15 @@ from component2.graph import update_edge_safety_from_yolo, calculate_haversine_d
 
 def load_graph():
     """Load the YOLO-enhanced graph"""
-    graph_path = Path('data/graph_with_yolo.gpickle')
+    graph_path = Path(__file__).resolve().parent / 'data' / 'graph_with_yolo.gpickle'
     with open(graph_path, 'rb') as f:
         G = pickle.load(f)
     return G
 
 def load_metadata():
     """Load the original metadata"""
-    return pd.read_csv('../final_metadata.csv')
-
+    metadata_path = project_root / 'final_metadata.csv'
+    return pd.read_csv(metadata_path)
 # ============================================================================
 # NAVIGATION FUNCTIONS (Same as navigation_app.py)
 # ============================================================================
