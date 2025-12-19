@@ -309,14 +309,16 @@ def main():
     )
     
     if input_method == "Preset Locations":
-        # Create preset interesting locations from your data
+        # Better preset locations spread across the loop
         locations = {}
-        for idx in [0, len(df)//4, len(df)//2, 3*len(df)//4, len(df)-1]:
-            row = df.iloc[idx]
-            locations[f"Point {idx} ({row['road_condition']})"] = (row['latitude'], row['longitude'])
+        indices = [0, 15, 30, 45, 60]  # Spread around the loop
+        for idx in indices:
+            if idx < len(df):
+                row = df.iloc[idx]
+                locations[f"Point {idx} ({row['road_condition']})"] = (row['latitude'], row['longitude'])
         
         start_loc = st.sidebar.selectbox("Start Location:", list(locations.keys()), index=0)
-        end_loc = st.sidebar.selectbox("End Location:", list(locations.keys()), index=len(locations)-1)
+        end_loc = st.sidebar.selectbox("End Location:", list(locations.keys()), index=2)  # Changed default
         
         start_lat, start_lon = locations[start_loc]
         end_lat, end_lon = locations[end_loc]
@@ -354,12 +356,17 @@ def main():
     
     # Calculate button
     if st.sidebar.button("🔍 Calculate Routes", type="primary"):
-        st.session_state['should_calculate'] = True    
+        st.session_state['calculate_trigger'] = True
+    else:
+        # Only keep the trigger for THIS run, then clear it
+        if 'calculate_trigger' not in st.session_state:
+            st.session_state['calculate_trigger'] = False
+
     # ========================================================================
     # MAIN CONTENT: Route Calculation and Visualization
     # ========================================================================
-    
-    if st.session_state.get('should_calculate', False):
+
+    if st.session_state.get('calculate_trigger', False):
         with st.spinner("Finding nearest nodes..."):
             start_node, start_dist = find_nearest_node(G, start_lat, start_lon)
             end_node, end_dist = find_nearest_node(G, end_lat, end_lon)
@@ -369,98 +376,149 @@ def main():
         
         if start_node == end_node:
             st.error("Start and end points are too close! Please select different locations.")
-            return
-        
-        with st.spinner(f"Calculating {num_routes} alternative routes..."):
-            routes = find_alternative_routes(G, start_node, end_node, k=num_routes)
-        
-        if not routes:
-            st.error("❌ No routes found between selected points!")
-            return
-        
-        st.success(f"✓ Found {len(routes)} route(s)")
-        
-        # ====================================================================
-        # Display Route Statistics
-        # ====================================================================
-        
-        st.markdown("---")
-        st.subheader("📊 Route Comparison")
-        
-        cols = st.columns(len(routes))
-        for i, (route, col) in enumerate(zip(routes, cols)):
-            with col:
-                # Color-coded metric based on safety
-                if route['safety_classification'] == 'Safe':
-                    icon = "✅"
-                elif route['safety_classification'] == 'Possibly Hazardous':
-                    icon = "⚠️"
-                else:
-                    icon = "🚨"
+            st.session_state['calculate_trigger'] = False
+        else:
+            with st.spinner(f"Calculating {num_routes} alternative routes..."):
+                routes = find_alternative_routes(G, start_node, end_node, k=num_routes)
+            
+            if not routes:
+                st.error("❌ No routes found between selected points!")
+                st.session_state['calculate_trigger'] = False
+            else:
+                # DEBUG: Show what was found
+                st.success(f"✓ Found {len(routes)} route(s)")
                 
-                st.markdown(f"### Route {i+1} {icon}")
-                st.metric("Distance", f"{route['actual_distance']:.0f}m")
-                st.metric("Safety Classification", route['safety_classification'])
-                st.metric("Safety Probability", f"{route['safety_probability']:.3f}")
-                st.metric("Segments", len(route['path']) - 1)
-        
-        # ====================================================================
-        # Create and Display Map
-        # ====================================================================
-        
-        st.markdown("---")
-        st.subheader("🗺️ Navigation Map")
-        
-        # Create base map
-        center_lat = (start_lat + end_lat) / 2
-        center_lon = (start_lon + end_lon) / 2
-        m = create_base_folium_map(G, center_lat, center_lon)
-        
-        # Add road network if requested
-        if show_road_network:
-            add_graph_edges_to_map(m, G, show_all_edges=True)
-        
-        # Add all routes with distinct colors
-        route_colors = ['blue', 'purple', 'darkred']  # Different color per route
-        for i, route in enumerate(routes):
-            add_route_to_map(m, G, route, label=f"Route {i+1}", route_color=route_colors[i])
-        
-        # Add start/end markers
-        start_coords_actual = [G.nodes[start_node]['pos'][1], G.nodes[start_node]['pos'][0]]
-        end_coords_actual = [G.nodes[end_node]['pos'][1], G.nodes[end_node]['pos'][0]]
-        add_markers_to_map(m, start_coords_actual, end_coords_actual)
-        
-        # Add legend
-        add_legend_to_map(m)
-        
-        # Display map
-        st_folium(m, width=1200, height=600)
-        
-        # ====================================================================
-        # Detailed Route Information
-        # ====================================================================
-        
-        with st.expander("📋 Detailed Route Information"):
-            for i, route in enumerate(routes):
-                st.markdown(f"#### Route {i+1} Details")
+                # Show summary of each route
+                for i, route in enumerate(routes):
+                    st.write(f"Route {i+1}: {len(route['path'])} nodes, "
+                            f"{route['actual_distance']:.0f}m, "
+                            f"Safety: {route['safety_classification']}")
                 
-                # Create dataframe of edges
-                edge_data = []
-                for j in range(len(route['path']) - 1):
-                    u, v = route['path'][j], route['path'][j+1]
-                    edge = G[u][v]
-                    edge_data.append({
-                        'Segment': j+1,
-                        'From Node': u,
-                        'To Node': v,
-                        'Distance (m)': f"{edge['raw_distance']:.1f}",
-                        'Condition': edge['condition'],
-                        'Safety Penalty': f"{edge['safety_penalty']}x",
-                        'YOLO Probability': f"{edge.get('yolo_probability', 'N/A')}"
-                    })
+                # ====================================================================
+                # Display Route Statistics
+                # ====================================================================
                 
-                st.dataframe(pd.DataFrame(edge_data), use_container_width=True)
                 st.markdown("---")
+                st.subheader("📊 Route Comparison")
+                
+                cols = st.columns(len(routes))
+                for i, (route, col) in enumerate(zip(routes, cols)):
+                    with col:
+                        # Color-coded metric based on safety
+                        if route['safety_classification'] == 'Safe':
+                            icon = "✅"
+                        elif route['safety_classification'] == 'Possibly Hazardous':
+                            icon = "⚠️"
+                        else:
+                            icon = "🚨"
+                        
+                        st.markdown(f"### Route {i+1} {icon}")
+                        st.metric("Distance", f"{route['actual_distance']:.0f}m")
+                        st.metric("Safety Classification", route['safety_classification'])
+                        st.metric("Safety Probability", f"{route['safety_probability']:.3f}")
+                        st.metric("Segments", len(route['path']) - 1)
+                
+                # ====================================================================
+                # Create and Display Map
+                # ====================================================================
+                
+                st.markdown("---")
+                st.subheader("🗺️ Navigation Map")
+                
+                # Create base map
+                center_lat = (start_lat + end_lat) / 2
+                center_lon = (start_lon + end_lon) / 2
+                m = create_base_folium_map(G, center_lat, center_lon)
+                
+                # Add road network if requested
+                if show_road_network:
+                    add_graph_edges_to_map(m, G, show_all_edges=True)
+                
+                # Add all routes with DISTINCT colors
+                route_display_colors = ['blue', 'purple', 'darkred']
+                for i, route in enumerate(routes):
+                    color = route_display_colors[i] if i < len(route_display_colors) else 'gray'
+                    
+                    # Get path coordinates
+                    path_coords = []
+                    for node in route['path']:
+                        lon, lat = G.nodes[node]['pos']
+                        path_coords.append([lat, lon])
+                    
+                    # Create popup
+                    popup_html = f"""
+                    <div style="width: 200px">
+                        <b>Route {i+1}</b><br>
+                        <b>Classification:</b> {route['safety_classification']}<br>
+                        <b>Distance:</b> {route['actual_distance']:.0f}m<br>
+                        <b>Safety Score:</b> {route['safety_probability']:.3f}<br>
+                        <b>Segments:</b> {len(route['path']) - 1}
+                    </div>
+                    """
+                    
+                    # Add to map with distinct color and higher weight for visibility
+                    folium.PolyLine(
+                        path_coords,
+                        color=color,
+                        weight=8 - (i * 2),  # First route thickest, others thinner
+                        opacity=0.8,
+                        popup=folium.Popup(popup_html, max_width=250)
+                    ).add_to(m)
+                
+                # Add start/end markers
+                start_coords_actual = [G.nodes[start_node]['pos'][1], G.nodes[start_node]['pos'][0]]
+                end_coords_actual = [G.nodes[end_node]['pos'][1], G.nodes[end_node]['pos'][0]]
+                add_markers_to_map(m, start_coords_actual, end_coords_actual)
+                
+                # Add legend with route colors
+                legend_html = f'''
+                <div style="position: fixed; 
+                            bottom: 50px; right: 50px; width: 200px; height: 200px; 
+                            background-color: white; border:2px solid grey; z-index:9999; 
+                            font-size:14px; padding: 10px">
+                <b>Routes Found: {len(routes)}</b><br>
+                <span style="color:blue; font-size:20px">━━</span> Route 1<br>
+                {f'<span style="color:purple; font-size:20px">━━</span> Route 2<br>' if len(routes) > 1 else ''}
+                {f'<span style="color:darkred; font-size:20px">━━</span> Route 3<br>' if len(routes) > 2 else ''}
+                <br>
+                <b>Road Conditions:</b><br>
+                <span style="color:green">●</span> Safe  
+                <span style="color:gold">●</span> Minor Issues  
+                <span style="color:red">●</span> Major Issues
+                </div>
+                '''
+                m.get_root().html.add_child(folium.Element(legend_html))
+                
+                # Display map
+                st_folium(m, width=1200, height=600)
+                
+                # ====================================================================
+                # Detailed Route Information
+                # ====================================================================
+                
+                with st.expander("📋 Detailed Route Information"):
+                    for i, route in enumerate(routes):
+                        st.markdown(f"#### Route {i+1} Details")
+                        
+                        # Create dataframe of edges
+                        edge_data = []
+                        for j in range(len(route['path']) - 1):
+                            u, v = route['path'][j], route['path'][j+1]
+                            edge = G[u][v]
+                            edge_data.append({
+                                'Segment': j+1,
+                                'From Node': u,
+                                'To Node': v,
+                                'Distance (m)': f"{edge['raw_distance']:.1f}",
+                                'Condition': edge['condition'],
+                                'Safety Penalty': f"{edge['safety_penalty']}x",
+                                'YOLO Probability': f"{edge.get('yolo_probability', 'N/A')}"
+                            })
+                        
+                        st.dataframe(pd.DataFrame(edge_data), use_container_width=True)
+                        st.markdown("---")
+    else:
+        st.info("👈 Configure your route in the sidebar and click 'Calculate Routes' to begin")
 
 # ============================================================================
 # RUN APP
