@@ -6,7 +6,11 @@ from streamlit_folium import st_folium
 import pandas as pd
 import numpy as np
 from pathlib import Path
+import sys
 
+project_root = Path(__file__).resolve().parent.parent
+if str(project_root) not in sys.path:
+    sys.path.insert(0, str(project_root))
 from component2.graph import calculate_haversine_distance
 
 # ============================================================================
