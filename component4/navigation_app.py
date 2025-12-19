@@ -30,7 +30,7 @@ st.set_page_config(
 @st.cache_resource
 def load_graph():
     """Load the YOLO-enhanced graph"""
-    graph_path = Path('data/graph_with_yolo.gpickle')
+    graph_path = Path('component4/data/graph_with_yolo.gpickle')
     with open(graph_path, 'rb') as f:
         G = pickle.load(f)
     return G
