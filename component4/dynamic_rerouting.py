@@ -7,7 +7,8 @@ from pathlib import Path
 import sys
 
 # Import from graph.py
-sys.path.append('..')
+parent_dir = Path(__file__).parent.parent
+sys.path.insert(0, str(parent_dir))
 from component2.graph import update_edge_safety_from_yolo, calculate_haversine_distance
 
 # ============================================================================
