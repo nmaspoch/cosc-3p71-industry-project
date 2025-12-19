@@ -212,13 +212,17 @@ def add_graph_edges_to_map(m, G, show_all_edges=False):
                 tooltip=tooltip
             ).add_to(m)
 
-def add_route_to_map(m, G, route, label="Route"):
+def add_route_to_map(m, G, route, label="Route", route_color=None):
     """Add a calculated route to the map"""
     path_coords = []
     
     for node in route['path']:
         lon, lat = G.nodes[node]['pos']
         path_coords.append([lat, lon])
+    
+    # Use custom color if provided, otherwise use safety color
+    if route_color is None:
+        route_color = route['color']
     
     # Create popup with route stats
     popup_html = f"""
@@ -233,7 +237,7 @@ def add_route_to_map(m, G, route, label="Route"):
     
     folium.PolyLine(
         path_coords,
-        color=route['color'],
+        color=route_color,
         weight=6,
         opacity=0.8,
         popup=folium.Popup(popup_html, max_width=250)
@@ -416,9 +420,10 @@ def main():
         if show_road_network:
             add_graph_edges_to_map(m, G, show_all_edges=True)
         
-        # Add all routes
+        # Add all routes with distinct colors
+        route_colors = ['blue', 'purple', 'darkred']  # Different color per route
         for i, route in enumerate(routes):
-            add_route_to_map(m, G, route, label=f"Route {i+1}")
+            add_route_to_map(m, G, route, label=f"Route {i+1}", route_color=route_colors[i])
         
         # Add start/end markers
         start_coords_actual = [G.nodes[start_node]['pos'][1], G.nodes[start_node]['pos'][0]]
