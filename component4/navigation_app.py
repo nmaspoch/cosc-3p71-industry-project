@@ -8,7 +8,8 @@ import numpy as np
 from pathlib import Path
 import sys
 
-sys.path.append('..')
+parent_dir = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(parent_dir))
 from component2.graph import calculate_haversine_distance
 
 # ============================================================================

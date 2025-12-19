@@ -8,7 +8,7 @@ import sys
 from pathlib import Path
 from ultralytics import YOLO
 
-parent_dir = Path(__file__).parent.parent
+parent_dir = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(parent_dir))
 
 # Import graph building functions
