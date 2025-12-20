@@ -128,13 +128,13 @@ def find_route(G, start_node, end_node, algorithm='dijkstra'):
     except nx.NetworkXNoPath:
         return {'exists': False}
 
-def find_alternative_routes(G, start_node, end_node, k=3):
+def find_alternative_routes(G, start_node, end_node, k=3, algorithm='dijkstra'):
     """Find k alternative routes by penalizing used edges instead of removing them"""
     routes = []
     G_temp = G.copy()
     
     for i in range(k):
-        route = find_route(G_temp, start_node, end_node)
+        route = find_route(G_temp, start_node, end_node, algorithm=algorithm)
         
         if not route['exists']:
             break
@@ -376,6 +376,14 @@ def main():
     show_road_network = st.sidebar.checkbox("Show Road Network", value=False)
     num_routes = st.sidebar.slider("Number of Alternative Routes", 1, 3, 3)
     
+    # Algorithm selection
+    st.sidebar.markdown("**Pathfinding Algorithm**")
+    algorithm = st.sidebar.radio(
+        "Select Algorithm:",
+        ["dijkstra", "astar"],
+        format_func=lambda x: "Dijkstra's Algorithm" if x == "dijkstra" else "A* Algorithm"
+    )
+    
     # Route visibility toggles
     st.sidebar.markdown("**Route Visibility**")
     route_visibility = {}
@@ -400,14 +408,15 @@ def main():
         if start_node == end_node:
             st.error("Start and end points are too close! Please select different locations.")
         else:
-            with st.spinner(f"Calculating {num_routes} alternative routes..."):
-                routes = find_alternative_routes(G, start_node, end_node, k=num_routes)
+            with st.spinner(f"Calculating {num_routes} alternative routes using {algorithm.upper()}..."):
+                routes = find_alternative_routes(G, start_node, end_node, k=num_routes, algorithm=algorithm)
             
             if not routes:
                 st.error("❌ No routes found between selected points!")
             else:
                 # Show route count and info
-                st.success(f"✓ Found {len(routes)} route(s)")
+                algorithm_name = "Dijkstra's Algorithm" if algorithm == "dijkstra" else "A* Algorithm"
+                st.success(f"✓ Found {len(routes)} route(s) using {algorithm_name}")
                 
                 if len(routes) == 1:
                     st.info("ℹ️ Only one route available. Your road network may have limited alternative paths between these points.")
