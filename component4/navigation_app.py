@@ -7,6 +7,8 @@ import pandas as pd
 import numpy as np
 from pathlib import Path
 import sys
+from datetime import datetime
+import random
 
 project_root = Path(__file__).resolve().parent.parent
 if str(project_root) not in sys.path:
@@ -22,6 +24,21 @@ st.set_page_config(
     page_icon="🚗",
     layout="wide"
 )
+
+# ============================================================================
+# CONSTANTS
+# ============================================================================
+
+# Average speeds (km/h) for different road conditions
+SPEED_CONFIG = {
+    'safe': 40,  # Normal urban driving
+    'minor_issues': 25,  # Slower due to minor problems
+    'major_issues': 15,  # Very slow due to major problems
+    'major_problems': 15
+}
+
+# Default speed for unknown conditions
+DEFAULT_SPEED = 30  # km/h
 
 # ============================================================================
 # LOAD DATA (Cached for performance)
@@ -97,8 +114,33 @@ def calculate_route_safety(G, path):
     
     return classification, probability, total_distance, color
 
+def calculate_travel_time(G, path):
+    """
+    Calculate estimated travel time for a route based on distance and road conditions.
+    Returns time in minutes.
+    """
+    if len(path) < 2:
+        return 0.0
+    
+    total_time_hours = 0.0
+    
+    for i in range(len(path) - 1):
+        u, v = path[i], path[i+1]
+        if G.has_edge(u, v):
+            edge_data = G[u][v]
+            distance_km = edge_data['raw_distance'] / 1000  # Convert m to km
+            condition = edge_data.get('condition', 'safe')
+            speed = SPEED_CONFIG.get(condition, DEFAULT_SPEED)
+            
+            # Time = Distance / Speed
+            segment_time = distance_km / speed
+            total_time_hours += segment_time
+    
+    # Convert hours to minutes
+    return total_time_hours * 60
+
 def find_route(G, start_node, end_node, algorithm='dijkstra'):
-    """Find the shortest weighted path using specified algorithm"""
+    """Find the shortest weighted path using specified algorithm with travel time"""
     try:
         if algorithm == 'astar':
             # A* requires a heuristic function
@@ -115,11 +157,13 @@ def find_route(G, start_node, end_node, algorithm='dijkstra'):
             path_length = nx.dijkstra_path_length(G, start_node, end_node, weight='weight')
         
         classification, probability, actual_distance, color = calculate_route_safety(G, path)
+        travel_time = calculate_travel_time(G, path)
         
         return {
             'path': path,
             'weighted_cost': path_length,
             'actual_distance': actual_distance,
+            'travel_time': travel_time,
             'safety_classification': classification,
             'safety_probability': probability,
             'color': color,
@@ -153,6 +197,94 @@ def find_alternative_routes(G, start_node, end_node, k=3, algorithm='dijkstra'):
                 G_temp[v][u]['weight'] = G_temp[v][u]['weight'] * 10
     
     return routes
+
+# ============================================================================
+# REAL-TIME DETECTION FUNCTIONS
+# ============================================================================
+
+def simulate_random_hazard(G, excluded_edges=None):
+    """
+    Simulate detection of a new road hazard on a random edge.
+    Returns the affected edge (u, v) and new condition.
+    """
+    if excluded_edges is None:
+        excluded_edges = set()
+    
+    # Get all edges not in excluded set
+    available_edges = [(u, v) for u, v, _ in G.edges(data=True) 
+                       if (u, v) not in excluded_edges]
+    
+    if not available_edges:
+        return None
+    
+    # Select random edge
+    u, v = random.choice(available_edges)
+    
+    # Simulate hazard detection
+    hazard_types = ['major_issues', 'major_problems']
+    new_condition = random.choice(hazard_types)
+    
+    # Calculate new safety penalty
+    if new_condition in ['major_issues', 'major_problems']:
+        new_penalty = 3.0
+    else:
+        new_penalty = 2.0
+    
+    return {
+        'edge': (u, v),
+        'new_condition': new_condition,
+        'old_condition': G[u][v].get('condition', 'safe'),
+        'new_penalty': new_penalty,
+        'old_penalty': G[u][v]['safety_penalty'],
+        'timestamp': datetime.now().strftime("%H:%M:%S")
+    }
+
+def apply_hazard_to_graph(G, hazard_info):
+    """
+    Apply a detected hazard to the graph by updating edge weights.
+    Returns modified graph.
+    """
+    G_updated = G.copy()
+    u, v = hazard_info['edge']
+    
+    # Update both directions if edge exists
+    if G_updated.has_edge(u, v):
+        G_updated[u][v]['condition'] = hazard_info['new_condition']
+        G_updated[u][v]['safety_penalty'] = hazard_info['new_penalty']
+        G_updated[u][v]['weight'] = (G_updated[u][v]['raw_distance'] * 
+                                     hazard_info['new_penalty'])
+    
+    if G_updated.has_edge(v, u):
+        G_updated[v][u]['condition'] = hazard_info['new_condition']
+        G_updated[v][u]['safety_penalty'] = hazard_info['new_penalty']
+        G_updated[v][u]['weight'] = (G_updated[v][u]['raw_distance'] * 
+                                     hazard_info['new_penalty'])
+    
+    return G_updated
+
+def check_route_affected(route, hazard_info):
+    """Check if a route is affected by a detected hazard"""
+    u, v = hazard_info['edge']
+    path = route['path']
+    
+    for i in range(len(path) - 1):
+        if (path[i] == u and path[i+1] == v) or (path[i] == v and path[i+1] == u):
+            return True
+    return False
+
+def calculate_route_comparison(original_route, new_route):
+    """Compare original route with re-routed path"""
+    time_diff = new_route['travel_time'] - original_route['travel_time']
+    dist_diff = new_route['actual_distance'] - original_route['actual_distance']
+    
+    return {
+        'time_difference': time_diff,
+        'distance_difference': dist_diff,
+        'is_faster': time_diff < 0,
+        'is_shorter': dist_diff < 0,
+        'safety_improved': (new_route['safety_probability'] < 
+                          original_route['safety_probability'])
+    }
 
 # ============================================================================
 # VISUALIZATION FUNCTIONS
@@ -238,12 +370,13 @@ def add_route_to_map(m, G, route, label="Route", route_color=None):
     if route_color is None:
         route_color = route['color']
     
-    # Create popup with route stats
+    # Create popup with route stats (including travel time)
     popup_html = f"""
     <div style="width: 200px">
         <b>{label}</b><br>
         <b>Classification:</b> {route['safety_classification']}<br>
         <b>Distance:</b> {route['actual_distance']:.0f}m<br>
+        <b>Travel Time:</b> {route['travel_time']:.1f} min<br>
         <b>Safety Score:</b> {route['safety_probability']:.3f}<br>
         <b>Segments:</b> {len(route['path']) - 1}
     </div>
@@ -392,7 +525,8 @@ def main():
     
     # Calculate button
     if st.sidebar.button("🔍 Calculate Routes", type="primary"):
-        st.session_state['should_calculate'] = True        
+        st.session_state['should_calculate'] = True
+        
     # ========================================================================
     # MAIN CONTENT: Route Calculation and Visualization
     # ========================================================================
@@ -402,8 +536,8 @@ def main():
             start_node, start_dist = find_nearest_node(G, start_lat, start_lon)
             end_node, end_dist = find_nearest_node(G, end_lat, end_lon)
         
-        st.info(f"📍 Start node: {start_node} (Distance: {start_dist:.1f}m from input)\n\n"
-                f"📍 End node: {end_node} (Distance: {end_dist:.1f}m from input)")
+        st.info(f"🎯 Start node: {start_node} (Distance: {start_dist:.1f}m from input)\n\n"
+                f"🎯 End node: {end_node} (Distance: {end_dist:.1f}m from input)")
         
         if start_node == end_node:
             st.error("Start and end points are too close! Please select different locations.")
@@ -421,7 +555,7 @@ def main():
                 if len(routes) == 1:
                     st.info("ℹ️ Only one route available. Your road network may have limited alternative paths between these points.")
                 
-                # Display Route Statistics
+                # Display Route Statistics (WITH TRAVEL TIME)
                 st.markdown("---")
                 st.subheader("📊 Route Comparison")
                 
@@ -438,6 +572,7 @@ def main():
                         
                         st.markdown(f"### Route {i+1} {icon}")
                         st.metric("Distance", f"{route['actual_distance']:.0f}m")
+                        st.metric("Travel Time", f"{route['travel_time']:.1f} min")
                         st.metric("Safety Classification", route['safety_classification'])
                         st.metric("Safety Probability", f"{route['safety_probability']:.3f}")
                         st.metric("Segments", len(route['path']) - 1)
@@ -470,12 +605,13 @@ def main():
                         lon, lat = G.nodes[node]['pos']
                         path_coords.append([lat, lon])
                     
-                    # Create popup
+                    # Create popup with travel time
                     popup_html = f"""
                     <div style="width: 200px">
                         <b>Route {i+1}</b><br>
                         <b>Classification:</b> {route['safety_classification']}<br>
                         <b>Distance:</b> {route['actual_distance']:.0f}m<br>
+                        <b>Travel Time:</b> {route['travel_time']:.1f} min<br>
                         <b>Safety Score:</b> {route['safety_probability']:.3f}<br>
                         <b>Segments:</b> {len(route['path']) - 1}
                     </div>
@@ -522,6 +658,165 @@ def main():
                 # Display map
                 st_folium(m, width=1200, height=600)
                 
+                # ============================================================
+                # REAL-TIME HAZARD DETECTION & RE-ROUTING
+                # ============================================================
+                
+                st.markdown("---")
+                st.subheader("🚨 Real-Time Hazard Detection & Re-routing")
+                
+                col1, col2 = st.columns([2, 1])
+                
+                with col1:
+                    st.markdown("""
+                    This simulation demonstrates the system's ability to:
+                    - Detect new road hazards in real-time
+                    - Automatically re-route traffic around problems
+                    - Notify users of changes and alternatives
+                    """)
+                
+                with col2:
+                    if st.button("🎲 Simulate Hazard Detection", type="secondary"):
+                        st.session_state['trigger_hazard'] = True
+                
+                # Process hazard detection if triggered
+                if st.session_state.get('trigger_hazard', False):
+                    st.session_state['trigger_hazard'] = False
+                    
+                    with st.spinner("🔍 Detecting hazard..."):
+                        # Simulate hazard detection
+                        hazard = simulate_random_hazard(G)
+                        
+                        if hazard:
+                            st.session_state['detected_hazards'] = st.session_state.get('detected_hazards', [])
+                            st.session_state['detected_hazards'].append(hazard)
+                            
+                            # Check which routes are affected
+                            affected_routes = []
+                            for i, route in enumerate(routes):
+                                if check_route_affected(route, hazard):
+                                    affected_routes.append(i)
+                            
+                            # Store hazard info
+                            st.session_state['last_hazard'] = hazard
+                            st.session_state['affected_routes'] = affected_routes
+                            
+                            # Apply hazard to graph
+                            st.session_state['G_updated'] = apply_hazard_to_graph(G, hazard)
+                            
+                            # Store original routes for comparison
+                            st.session_state['original_routes'] = routes
+                            st.session_state['start_node'] = start_node
+                            st.session_state['end_node'] = end_node
+                
+                # Display Notification System
+                if st.session_state.get('last_hazard'):
+                    hazard = st.session_state['last_hazard']
+                    affected = st.session_state.get('affected_routes', [])
+                    
+                    # Notification Panel
+                    if affected:
+                        st.error(f"""
+                        ⚠️ **HAZARD DETECTED** at {hazard['timestamp']}
+                        
+                        **Location:** Between nodes {hazard['edge'][0]} and {hazard['edge'][1]}
+                        
+                        **Type:** {hazard['new_condition'].replace('_', ' ').title()}
+                        
+                        **Affected Routes:** Route {', Route '.join([str(i+1) for i in affected])}
+                        
+                        **Action Required:** Re-routing recommended
+                        """)
+                        
+                        # Calculate alternative routes
+                        if st.button("🔄 Calculate Alternative Routes", type="primary"):
+                            G_updated = st.session_state['G_updated']
+                            original_routes = st.session_state.get('original_routes', routes)
+                            
+                            with st.spinner("Finding safer alternatives..."):
+                                new_routes = find_alternative_routes(
+                                    G_updated, start_node, end_node, k=num_routes, algorithm=algorithm
+                                )
+                                
+                                if new_routes:
+                                    st.success(f"✅ Found {len(new_routes)} alternative route(s)")
+                                    
+                                    # Compare with original routes
+                                    st.markdown("### 📊 Route Comparison: Original vs. Alternative")
+                                    
+                                    for i in affected:
+                                        if i < len(original_routes) and i < len(new_routes):
+                                            original = original_routes[i]
+                                            alternative = new_routes[i]
+                                            comparison = calculate_route_comparison(original, alternative)
+                                            
+                                            st.markdown(f"#### Route {i+1} Analysis")
+                                            col1, col2, col3 = st.columns(3)
+                                            
+                                            with col1:
+                                                st.metric(
+                                                    "Time Change",
+                                                    f"{alternative['travel_time']:.1f} min",
+                                                    f"{comparison['time_difference']:+.1f} min"
+                                                )
+                                            
+                                            with col2:
+                                                st.metric(
+                                                    "Distance Change",
+                                                    f"{alternative['actual_distance']:.0f}m",
+                                                    f"{comparison['distance_difference']:+.0f}m"
+                                                )
+                                            
+                                            with col3:
+                                                safety_change = (alternative['safety_probability'] - 
+                                                               original['safety_probability'])
+                                                st.metric(
+                                                    "Safety Change",
+                                                    f"{alternative['safety_probability']:.3f}",
+                                                    f"{safety_change:+.3f}"
+                                                )
+                                            
+                                            # Recommendation
+                                            if comparison['safety_improved']:
+                                                st.success(f"✅ **Recommendation:** Take alternative route - Safer path available")
+                                            elif comparison['is_faster']:
+                                                st.info(f"ℹ️ **Recommendation:** Alternative route is {abs(comparison['time_difference']):.1f} min faster")
+                                            else:
+                                                st.warning(f"⚠️ **Recommendation:** Original route affected - Consider alternatives")
+                                            
+                                            st.markdown("---")
+                                    
+                                    # Store new routes for visualization
+                                    st.session_state['alternative_routes'] = new_routes
+                    else:
+                        st.info(f"""
+                        ℹ️ **Hazard Detected** at {hazard['timestamp']}
+                        
+                        **Location:** Between nodes {hazard['edge'][0]} and {hazard['edge'][1]}
+                        
+                        **Status:** Your current routes are not affected by this hazard.
+                        """)
+                
+                # Display all detected hazards history
+                if st.session_state.get('detected_hazards'):
+                    with st.expander("📋 Hazard Detection History"):
+                        hazards_df = pd.DataFrame([
+                            {
+                                'Time': h['timestamp'],
+                                'Edge': f"{h['edge'][0]} → {h['edge'][1]}",
+                                'Type': h['new_condition'].replace('_', ' ').title(),
+                                'Old Condition': h['old_condition'],
+                                'Penalty Change': f"{h['old_penalty']}x → {h['new_penalty']}x"
+                            }
+                            for h in st.session_state['detected_hazards']
+                        ])
+                        st.dataframe(hazards_df, use_container_width=True)
+                        
+                        if st.button("🗑️ Clear History"):
+                            st.session_state['detected_hazards'] = []
+                            st.session_state['last_hazard'] = None
+                            st.rerun()
+                
                 # Detailed Route Information
                 with st.expander("📋 Detailed Route Information"):
                     for i, route in enumerate(routes):
@@ -544,8 +839,6 @@ def main():
                         
                         st.dataframe(pd.DataFrame(edge_data), use_container_width=True)
                         st.markdown("---")
-    else:
-        st.info("👈 Configure your route in the sidebar and click 'Calculate Routes' to begin")
 
 # ============================================================================
 # RUN APP
