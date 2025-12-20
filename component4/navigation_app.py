@@ -97,11 +97,22 @@ def calculate_route_safety(G, path):
     
     return classification, probability, total_distance, color
 
-def find_route(G, start_node, end_node):
-    """Find the shortest weighted path using Dijkstra's algorithm"""
+def find_route(G, start_node, end_node, algorithm='dijkstra'):
+    """Find the shortest weighted path using specified algorithm"""
     try:
-        path = nx.dijkstra_path(G, start_node, end_node, weight='weight')
-        path_length = nx.dijkstra_path_length(G, start_node, end_node, weight='weight')
+        if algorithm == 'astar':
+            # A* requires a heuristic function
+            def heuristic(u, v):
+                """Heuristic: straight-line distance between nodes"""
+                u_lon, u_lat = G.nodes[u]['pos']
+                v_lon, v_lat = G.nodes[v]['pos']
+                return calculate_haversine_distance(u_lat, u_lon, v_lat, v_lon)
+            
+            path = nx.astar_path(G, start_node, end_node, heuristic=heuristic, weight='weight')
+            path_length = nx.astar_path_length(G, start_node, end_node, heuristic=heuristic, weight='weight')
+        else:  # dijkstra
+            path = nx.dijkstra_path(G, start_node, end_node, weight='weight')
+            path_length = nx.dijkstra_path_length(G, start_node, end_node, weight='weight')
         
         classification, probability, actual_distance, color = calculate_route_safety(G, path)
         
