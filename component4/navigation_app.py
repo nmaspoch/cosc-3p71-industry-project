@@ -8,9 +8,10 @@ import numpy as np
 from pathlib import Path
 import sys
 
-# Add parent directory to path to import from graph.py
-sys.path.append('..')
-from graph import calculate_haversine_distance
+project_root = Path(__file__).resolve().parent.parent
+if str(project_root) not in sys.path:
+    sys.path.insert(0, str(project_root))
+from component2.graph import calculate_haversine_distance
 
 # ============================================================================
 # PAGE CONFIG
