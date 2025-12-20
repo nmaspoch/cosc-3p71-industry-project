@@ -253,27 +253,6 @@ def save_outputs(G, edge_to_images, edge_safety_scores):
     output_dir = Path('component4/data')
     output_dir.mkdir(parents=True, exist_ok=True)
     
-    # Save base graph using pickle
-    graph_base_path = output_dir / 'graph_base.gpickle'
-    with open(graph_base_path, 'wb') as f:
-        pickle.dump(G, f, pickle.HIGHEST_PROTOCOL)
-    print(f"✓ Base graph saved to: {graph_base_path}")
-    
-    # Save edge-to-images mapping
-    mapping_path = output_dir / 'edge_to_images.json'
-    # Convert tuple keys to strings for JSON
-    mapping_json = {str(k): v for k, v in edge_to_images.items()}
-    with open(mapping_path, 'w') as f:
-        json.dump(mapping_json, f, indent=2)
-    print(f"✓ Edge mapping saved to: {mapping_path}")
-    
-    # Save safety scores
-    scores_path = output_dir / 'edge_safety_scores.json'
-    scores_json = {str(k): v for k, v in edge_safety_scores.items()}
-    with open(scores_path, 'w') as f:
-        json.dump(scores_json, f, indent=2)
-    print(f"✓ Safety scores saved to: {scores_path}")
-    
     # Update graph with YOLO scores
     print("\nUpdating graph with YOLO-based weights...")
     update_edge_safety_from_yolo(G, edge_safety_scores)
@@ -321,7 +300,7 @@ def main():
     edge_to_images = map_images_to_edges(G, df)
     
     # Step 4: Load YOLO model
-    model = load_yolo_model('yolov8n.pt')
+    model = load_yolo_model('component3/best.pt')
     
     # Step 5: Calculate safety scores
     edge_safety_scores = calculate_edge_safety_scores(G, edge_to_images, model, df)
@@ -333,9 +312,6 @@ def main():
     print("✓ PROCESSING COMPLETE!")
     print("="*60)
     print("\nGenerated files:")
-    print("  • component4/data/graph_base.gpickle")
-    print("  • component4/data/edge_to_images.json")
-    print("  • component4/data/edge_safety_scores.json")
     print("  • component4/data/graph_with_yolo.gpickle")
 
 if __name__ == "__main__":
