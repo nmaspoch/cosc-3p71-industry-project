@@ -3,11 +3,11 @@ import matplotlib
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
-import os
-import sys
+import osmnx as ox
 from math import radians, sin, cos, sqrt, atan2
-from sklearn.metrics.pairwise import haversine_distances
-from collections import Counter
+from scipy.spatial import cKDTree
+from collections import defaultdict
+
 # --- Configuration for Interactivity ---
 BROWSER_MODE = False
 try:
@@ -19,27 +19,15 @@ except Exception:
 # --- Safety and Weight Configuration ---
 SAFETY_PENALTIES = {
     'safe': 1.0,
-    # MODIFICATION 1: Removed 'none' as it's now mapped to 'safe' in pre-processing
     'minor_issues': 1.5,
     'major_issues': 3.0,
     'major_problems': 3.0  
 }
 
-# --- Data Pre-processing Function ---
-def normalize_road_conditions(nodes):
-    """
-    Replaces all 'none' road conditions with 'safe'.
-    """
-    for node in nodes:
-        if node['road_condition'] == 'none':
-            node['road_condition'] = 'safe'
-    return nodes
-# --- Graph Building Functions ---
+# --- Helper Functions ---
 
 def calculate_haversine_distance(lat1, lon1, lat2, lon2, earth_radius_m=6371000):
-    """
-    Calculates the Haversine distance between two points (in meters).
-    """
+    """Calculates the Haversine distance between two points (in meters)."""
     lat1_rad = radians(lat1)
     lon1_rad = radians(lon1)
     lat2_rad = radians(lat2)
@@ -54,341 +42,335 @@ def calculate_haversine_distance(lat1, lon1, lat2, lon2, earth_radius_m=6371000)
     distance = earth_radius_m * c
     return distance
 
-def calculate_bearing(lat1, lon1, lat2, lon2):
-    """Calculate the bearing (direction) between two points in degrees."""
-    delta_lon = lon2 - lon1
-    delta_lat = lat2 - lat1
-    bearing = np.arctan2(delta_lon, delta_lat)
-    return np.degrees(bearing)
+def get_bounding_box(nodes, padding=0.001):
+    """Calculate bounding box from node coordinates with padding."""
+    lats = [n['latitude'] for n in nodes]
+    lons = [n['longitude'] for n in nodes]
+    
+    north = max(lats) + padding
+    south = min(lats) - padding
+    east = max(lons) + padding
+    west = min(lons) - padding
+    
+    return north, south, east, west
 
-def is_collinear(p1, p2, p3, angle_threshold=15):
-    """Check if three points are approximately collinear."""
-    lat1, lon1 = p1
-    lat2, lon2 = p2
-    lat3, lon3 = p3
-    
-    bearing1 = calculate_bearing(lat1, lon1, lat2, lon2)
-    bearing2 = calculate_bearing(lat2, lon2, lat3, lon3)
-    
-    angle_diff = abs(bearing1 - bearing2)
-    
-    if angle_diff > 180:
-        angle_diff = 360 - angle_diff
-    
-    return angle_diff < angle_threshold
-
-def average_nearby_nodes(nodes, min_dist_threshold=25):
+def map_safety_data_to_edges(G, nodes, max_distance=50):
     """
-    Groups consecutive nodes that are within a close distance threshold.
-    Averages their coordinates and takes the majority vote for road condition.
+    Maps safety ratings from collected nodes to OSM graph edges.
+    Uses nearest neighbor matching within max_distance threshold.
     """
-    if not nodes:
-        return []
-
-    averaged_nodes = []
+    print(f"\nMapping {len(nodes)} safety data points to OSM edges...")
     
-    # Initialize the first batch
-    batch = [nodes[0]]
-    current_batch_dist = 0
+    # Build spatial index of OSM edge midpoints
+    edge_midpoints = []
+    edge_list = []
     
-    for i in range(1, len(nodes)):
-        curr = nodes[i]
-        prev = nodes[i-1]
-        
-        # Calculate distance from previous node
-        d = calculate_haversine_distance(prev['latitude'], prev['longitude'], 
-                                         curr['latitude'], curr['longitude'])
-        current_batch_dist += d
-        
-        # If we are within the threshold, add to batch
-        if current_batch_dist < min_dist_threshold:
-            batch.append(curr)
+    for u, v, key in G.edges(keys=True):
+        # Get edge geometry
+        if 'geometry' in G[u][v][key]:
+            geom = G[u][v][key]['geometry']
+            # Use midpoint of geometry
+            coords = list(geom.coords)
+            mid_idx = len(coords) // 2
+            mid_lon, mid_lat = coords[mid_idx]
         else:
-            # Batch is full (distance exceeded) -> Process it
-            # 1. Average Position
-            avg_lat = np.mean([n['latitude'] for n in batch])
-            avg_lon = np.mean([n['longitude'] for n in batch])
-            
-            # 2. Majority Vote Condition
-            conditions = [n['road_condition'] for n in batch]
-            most_common_condition = Counter(conditions).most_common(1)[0][0]
-            
-            new_node = {
-                'original_index': batch[0]['original_index'], 
-                'latitude': avg_lat,
-                'longitude': avg_lon,
-                'road_condition': most_common_condition
-            }
-            averaged_nodes.append(new_node)
-            
-            # Start new batch with current node
-            batch = [curr]
-            current_batch_dist = 0
-            
-    # Process any remaining nodes in the final batch
-    if batch:
-        avg_lat = np.mean([n['latitude'] for n in batch])
-        avg_lon = np.mean([n['longitude'] for n in batch])
-        conditions = [n['road_condition'] for n in batch]
-        most_common_condition = Counter(conditions).most_common(1)[0][0]
+            # Use midpoint between nodes
+            u_lat, u_lon = G.nodes[u]['y'], G.nodes[u]['x']
+            v_lat, v_lon = G.nodes[v]['y'], G.nodes[v]['x']
+            mid_lat = (u_lat + v_lat) / 2
+            mid_lon = (u_lon + v_lon) / 2
         
-        new_node = {
-            'original_index': batch[0]['original_index'],
-            'latitude': avg_lat,
-            'longitude': avg_lon,
-            'road_condition': most_common_condition
-        }
-        averaged_nodes.append(new_node)
+        edge_midpoints.append([mid_lat, mid_lon])
+        edge_list.append((u, v, key))
+    
+    # Build KD-tree for fast nearest neighbor search
+    edge_tree = cKDTree(edge_midpoints)
+    
+    # Build KD-tree for safety nodes
+    node_coords = [[n['latitude'], n['longitude']] for n in nodes]
+    node_tree = cKDTree(node_coords)
+    
+    # Map each safety node to nearest edge
+    edge_safety_data = defaultdict(list)
+    matched_count = 0
+    
+    for i, node in enumerate(nodes):
+        node_coord = [node['latitude'], node['longitude']]
         
-    return averaged_nodes
-
-def reduce_collinear_nodes(nodes, angle_threshold=15):
-    """
-    Reduce nodes by removing intermediate points that lie on straight segments.
-    Condition check is removed to allow longer, single-color edges.
-    """
-    if len(nodes) <= 2:
-        return nodes
-    
-    reduced_nodes = [nodes[0]]
-    
-    for i in range(1, len(nodes) - 1):
-        prev_node = reduced_nodes[-1]
-        curr_node = nodes[i]
-        next_node = nodes[i + 1]
+        # Find nearest edge
+        dist, edge_idx = edge_tree.query(node_coord)
         
-        # Keep node if it's a turning point (not collinear)
-        prev_pos = (prev_node['latitude'], prev_node['longitude'])
-        curr_pos = (curr_node['latitude'], curr_node['longitude'])
-        next_pos = (next_node['latitude'], next_node['longitude'])
-        
-        if not is_collinear(prev_pos, curr_pos, next_pos, angle_threshold):
-            reduced_nodes.append(curr_node)
-    
-    reduced_nodes.append(nodes[-1])
-    
-    return reduced_nodes
-
-def build_weighted_road_network_graph(nodes, simplify=True, angle_threshold=15, averaging_threshold=25):
-    """
-    Builds a CONNECTED bidirectional, weighted road network graph.
-    """
-    original_count = len(nodes)
-    
-    # STEP 1: Spatial Averaging (Smoothing) 
-    nodes = average_nearby_nodes(nodes, min_dist_threshold=averaging_threshold)
-    print(f"  • Nodes averaged (smoothed) from {original_count} to {len(nodes)} (Threshold: {averaging_threshold}m)")
-    
-    # STEP 2: Collinear Reduction (Geometry optimization)
-    if simplify:
-        intermediate_count = len(nodes)
-        nodes = reduce_collinear_nodes(nodes, angle_threshold)
-        print(f"  • Nodes reduced (geometry) from {intermediate_count} to {len(nodes)}")
-    
-    G = nx.DiGraph()
-    
-    for idx, node_data in enumerate(nodes):
-        G.add_node(idx, 
-                   original_index=node_data['original_index'],
-                   pos=(node_data['longitude'], node_data['latitude']),
-                   road_condition=node_data['road_condition'])
-                   
-    for i in range(len(nodes) - 1):
-        source_data = nodes[i]
-        source_idx = i
-        target_data = nodes[i+1]
-        target_idx = i+1
-        
-        # The weight calculation remains the same
-        distance = calculate_haversine_distance(
-            source_data['latitude'], source_data['longitude'],
-            target_data['latitude'], target_data['longitude']
+        # Convert to meters (KD-tree returns in coordinate units)
+        dist_meters = calculate_haversine_distance(
+            node_coord[0], node_coord[1],
+            edge_midpoints[edge_idx][0], edge_midpoints[edge_idx][1]
         )
         
-        # The edge condition/penalty is based on the source node 
-        condition = source_data['road_condition']
-        penalty = SAFETY_PENALTIES.get(condition, 5.0)
-        weighted_cost = distance * penalty
+        if dist_meters <= max_distance:
+            u, v, key = edge_list[edge_idx]
+            edge_safety_data[(u, v, key)].append({
+                'condition': node['road_condition'],
+                'distance': dist_meters
+            })
+            matched_count += 1
+    
+    print(f"  • Matched {matched_count}/{len(nodes)} data points to edges")
+    print(f"  • {len(edge_safety_data)} unique edges have safety data")
+    
+    # Aggregate safety data for each edge (use worst condition)
+    condition_priority = {
+        'safe': 0,
+        'minor_issues': 1,
+        'major_issues': 2,
+        'major_problems': 2
+    }
+    
+    for (u, v, key), data_points in edge_safety_data.items():
+        # Find worst condition
+        worst_condition = 'safe'
+        worst_priority = -1
         
-        G.add_edge(source_idx, target_idx, 
-                   weight=weighted_cost, 
-                   raw_distance=distance,
-                   safety_penalty=penalty,
-                   condition=condition) # Added condition to edge for visualization
-                   
-        G.add_edge(target_idx, source_idx, 
-                   weight=weighted_cost, 
-                   raw_distance=distance,
-                   safety_penalty=penalty,
-                   condition=condition)
-            
+        for point in data_points:
+            condition = point['condition']
+            priority = condition_priority.get(condition, 0)
+            if priority > worst_priority:
+                worst_priority = priority
+                worst_condition = condition
+        
+        # Update edge attributes
+        penalty = SAFETY_PENALTIES.get(worst_condition, 1.0)
+        length = G[u][v][key].get('length', 100)  # OSM provides length in meters
+        
+        G[u][v][key]['road_condition'] = worst_condition
+        G[u][v][key]['safety_penalty'] = penalty
+        G[u][v][key]['weight'] = length * penalty
+        G[u][v][key]['has_safety_data'] = True
+    
+    # Set default values for edges without safety data
+    edges_without_data = 0
+    for u, v, key in G.edges(keys=True):
+        if 'has_safety_data' not in G[u][v][key]:
+            length = G[u][v][key].get('length', 100)
+            G[u][v][key]['road_condition'] = 'safe'
+            G[u][v][key]['safety_penalty'] = 1.0
+            G[u][v][key]['weight'] = length * 1.0
+            G[u][v][key]['has_safety_data'] = False
+            edges_without_data += 1
+    
+    print(f"  • {edges_without_data} edges without data (defaulted to 'safe')")
+    
+    return G
+
+def build_osm_road_network(nodes, network_type='drive', custom_filter=None):
+    """
+    Downloads OSM road network for the area covered by nodes.
+    
+    Args:
+        nodes: List of node dictionaries with lat/lon
+        network_type: OSM network type ('drive', 'walk', 'bike', 'all')
+        custom_filter: Custom OSM filter (optional)
+    """
+    print("\n" + "=" * 60)
+    print("Building OSM-Based Road Network Graph")
+    print("=" * 60)
+    
+    # Calculate bounding box
+    north, south, east, west = get_bounding_box(nodes)
+    bbox = (west, south, east, north)
+    
+    print(f"\nBounding Box:")
+    print(f"  • North: {north:.6f}")
+    print(f"  • South: {south:.6f}")
+    print(f"  • East:  {east:.6f}")
+    print(f"  • West:  {west:.6f}")
+    
+    # Download OSM graph
+    print(f"\nDownloading OSM road network (type: {network_type})...")
+    try:
+        if custom_filter:
+            G = ox.graph_from_bbox(bbox=bbox, 
+                                   custom_filter=custom_filter, 
+                                   simplify=True)
+        else:
+            G = ox.graph_from_bbox(bbox=bbox, 
+                                   network_type=network_type, 
+                                   simplify=True)
+    except Exception as e:
+        print(f"✗ Error downloading OSM data: {e}")
+        print("\nTrying with smaller bounding box...")
+        
+        # Try with smaller padding
+        n2, s2, e2, w2 = get_bounding_box(nodes, padding=0.002)
+        bbox_small = (w2, s2, e2, n2)
+        G = ox.graph_from_bbox(bbox=bbox_small, 
+                               network_type=network_type, 
+                               simplify=True)
+    
+    # Convert to MultiDiGraph if not already
+    if not isinstance(G, nx.MultiDiGraph):
+        G = nx.MultiDiGraph(G)
+    
     return G
 
 def print_graph_statistics(G):
-    """Prints basic statistics about the graph."""
+    """Prints statistics about the graph."""
     print("\nGraph Statistics:")
     print(f"  • Nodes: {G.number_of_nodes()}")
-    print(f"  • Edges (Segments x 2): {G.number_of_edges()}")
+    print(f"  • Edges: {G.number_of_edges()}")
     
-    if G.number_of_nodes() > 0:
-        G_undirected = G.to_undirected()
-        is_connected = nx.is_connected(G_undirected)
-        print(f"  • Connected: {is_connected}")
-        
-        if not is_connected:
-            num_components = nx.number_connected_components(G_undirected)
-            print(f"  • Number of components: {num_components}")
+    # Check connectivity
+    G_undirected = G.to_undirected()
+    is_connected = nx.is_connected(G_undirected)
+    print(f"  • Connected: {is_connected}")
     
-    if G.number_of_nodes() > 1:
-        density = nx.density(G)
-        edges = G.edges(data=True)
-        avg_cost = np.mean([d['weight'] for _, _, d in edges])
-        avg_dist = np.mean([d['raw_distance'] for _, _, d in edges])
-        print(f"  • Average edge cost: {avg_cost:.6f}")
-        print(f"  • Average edge distance (m): {avg_dist:.6f}")
+    if not is_connected:
+        num_components = nx.number_connected_components(G_undirected)
+        largest_cc = max(nx.connected_components(G_undirected), key=len)
+        print(f"  • Number of components: {num_components}")
+        print(f"  • Largest component size: {len(largest_cc)} nodes")
+    
+    # Safety data statistics
+    edges_with_data = sum(1 for u, v, k, d in G.edges(keys=True, data=True) 
+                         if d.get('has_safety_data', False))
+    print(f"  • Edges with safety data: {edges_with_data}/{G.number_of_edges()}")
+    
+    # Condition distribution
+    conditions = [d.get('road_condition', 'safe') 
+                 for u, v, k, d in G.edges(keys=True, data=True)]
+    condition_counts = pd.Series(conditions).value_counts()
+    print(f"\nRoad Condition Distribution:")
+    for condition, count in condition_counts.items():
+        print(f"  • {condition}: {count}")
 
-def visualize_graph(G, filename='road_network_graph_weighted.png'):
+def visualize_graph(G, nodes, filename='osm_road_network_with_safety.png'):
+    """Visualize the OSM graph with safety overlay."""
     global BROWSER_MODE
-    # MODIFICATION 2: Removed 'none' as it's now 'safe'
+    
     condition_to_color = {
+        'safe': 'green',
         'minor_issues': 'gold',
         'major_issues': 'red',
-        'major_problems': 'red',
-        'safe': 'green' 
+        'major_problems': 'red'
     }
     
-    pos = nx.get_node_attributes(G, 'pos')
+    print("\nGenerating visualization...")
     
-    # Get node colors
-    node_conditions = nx.get_node_attributes(G, 'road_condition').values()
-    node_colors = [condition_to_color.get(c, 'red') for c in node_conditions]
+    fig, ax = plt.subplots(figsize=(16, 16))
     
-    # MODIFICATION 3: Get edge colors based on the 'condition' attribute we added
-    edge_conditions = nx.get_edge_attributes(G, 'condition')
-    # Filter to unique edges (u < v) for consistent coloring
-    edge_color_map = {}
-    for (u, v), condition in edge_conditions.items():
-        if u < v:
-            edge_color_map[(u, v)] = condition_to_color.get(condition, 'gray')
-
-    # Create a list of colors in the order of the edges in the graph
-    # This requires iterating through G.edges to maintain order
-    edge_colors = [edge_color_map.get((u, v) if u < v else (v, u), 'gray') for u, v, _ in G.edges(data=True)]
-
-    plt.figure(figsize=(14, 14))
+    # Plot base OSM graph (light gray for roads without data)
+    edge_colors = []
+    edge_widths = []
     
-    nx.draw_networkx_nodes(G, pos, node_size=100, node_color=node_colors, alpha=0.9)
-    # Use the calculated edge_colors array
-    nx.draw_networkx_edges(G, pos, edge_color=edge_colors, alpha=0.9, width=2.5, 
-                          arrows=True, arrowsize=10, arrowstyle='->')
+    for u, v, key, data in G.edges(keys=True, data=True):
+        if data.get('has_safety_data', False):
+            condition = data.get('road_condition', 'safe')
+            edge_colors.append(condition_to_color.get(condition, 'gray'))
+            edge_widths.append(3)
+        else:
+            edge_colors.append('lightgray')
+            edge_widths.append(1)
     
-    edge_weights = nx.get_edge_attributes(G, 'weight')
-    unique_weights = {}
-    for (u, v), weight in edge_weights.items():
-        if u < v:
-            unique_weights[(u, v)] = f"{weight:.2f}"
+    # Draw graph
+    ox.plot_graph(G, ax=ax, node_size=20, node_color='black', 
+                  edge_color=edge_colors, edge_linewidth=edge_widths,
+                  bgcolor='white', show=False, close=False)
     
-    nx.draw_networkx_edge_labels(G, pos, edge_labels=unique_weights, font_size=7, label_pos=0.5)
-
-    # MODIFICATION 4: Update legend handles (removed 'none' entry)
+    # Overlay original data collection points
+    lats = [n['latitude'] for n in nodes]
+    lons = [n['longitude'] for n in nodes]
+    node_colors = [condition_to_color.get(n['road_condition'], 'gray') 
+                   for n in nodes]
+    
+    ax.scatter(lons, lats, c=node_colors, s=50, alpha=0.7, 
+              edgecolors='black', linewidths=0.5, zorder=5,
+              label='Data Collection Points')
+    
+    # Legend
     legend_handles = [
-        plt.Line2D([0], [0], marker='o', color='w', label='Safe', markerfacecolor='green', markersize=10),
-        plt.Line2D([0], [0], marker='o', color='w', label='Minor Issues', markerfacecolor='gold', markersize=10),
-        plt.Line2D([0], [0], marker='o', color='w', label='Major Issues/Problems', markerfacecolor='red', markersize=10)
+        plt.Line2D([0], [0], color='green', linewidth=3, label='Safe'),
+        plt.Line2D([0], [0], color='gold', linewidth=3, label='Minor Issues'),
+        plt.Line2D([0], [0], color='red', linewidth=3, label='Major Issues/Problems'),
+        plt.Line2D([0], [0], color='lightgray', linewidth=1, label='No Data (Default Safe)'),
+        plt.Line2D([0], [0], marker='o', color='w', label='Collection Points',
+                  markerfacecolor='black', markersize=8)
     ]
-    plt.legend(handles=legend_handles, title="Road Condition", loc='upper left')
-
-    plt.title(f"Simplified Road Network Graph - {G.number_of_nodes()} Key Points")
-    plt.xlabel("Longitude")
-    plt.ylabel("Latitude")
-    plt.grid(True, linestyle='--', alpha=0.3)
+    ax.legend(handles=legend_handles, title="Road Safety", loc='upper left', fontsize=10)
+    
+    ax.set_title(f"OSM Road Network with Safety Data\n{G.number_of_nodes()} nodes, {G.number_of_edges()} edges", 
+                fontsize=14, fontweight='bold')
+    
     plt.tight_layout()
     
     if BROWSER_MODE:
-        plt.show() 
+        plt.show()
     else:
-        plt.savefig(filename, dpi=150)
-        print(f"\nStatic visualization saved to {filename}")
+        plt.savefig(filename, dpi=150, bbox_inches='tight')
+        print(f"✓ Visualization saved to {filename}")
         plt.close()
 
-def update_edge_safety_from_yolo(G, edge_safety_scores):
-    for (u, v), prob_score in edge_safety_scores.items():
-        if G.has_edge(u, v):
-            if prob_score < 0.3:
-                condition = 'safe'
-                penalty = 1.0
-            elif prob_score < 0.7:
-                condition = 'minor_issues'
-                penalty = 1.5
-            else:
-                condition = 'major_issues'
-                penalty = 3.0
-            
-            raw_dist = G[u][v]['raw_distance']
-            new_weight = raw_dist * penalty
-            
-            G[u][v]['weight'] = new_weight
-            G[u][v]['safety_penalty'] = penalty
-            G[u][v]['condition'] = condition
-            G[u][v]['yolo_probability'] = prob_score
-            
-            if G.has_edge(v, u):
-                G[v][u]['weight'] = new_weight
-                G[v][u]['safety_penalty'] = penalty
-                G[v][u]['condition'] = condition
-                G[v][u]['yolo_probability'] = prob_score
+def save_graph(G, filename='osm_road_network.graphml'):
+    """Save graph to file for later use."""
+    print(f"\nSaving graph to {filename}...")
+    ox.save_graphml(G, filepath=filename)
+    print(f"✓ Graph saved successfully")
+
+def load_graph(filename='osm_road_network.graphml'):
+    """Load graph from file."""
+    print(f"\nLoading graph from {filename}...")
+    G = ox.load_graphml(filename)
+    print(f"✓ Graph loaded successfully")
+    return G
 
 # --- Main Execution Logic ---
 
 def main():
     print("=" * 60)
-    print("Connected Road Network Graph Builder (Final Simplified)")
+    print("OSM-Based Road Network Graph Builder")
     print("=" * 60)
     print("\nLoading data from final_metadata.csv...")
     
     try:
         df = pd.read_csv('final_metadata.csv')
     except FileNotFoundError:
-        print("Error: final_metadata.csv not found.")
+        print("✗ Error: final_metadata.csv not found.")
         return
     
-    if 'index' in df.columns:
-        df = df.sort_values('index').reset_index(drop=True)
-    
+    # Prepare nodes
     nodes = df.apply(lambda row: {
         'original_index': row['index'] if 'index' in row else row.name,
         'latitude': row['latitude'],
         'longitude': row['longitude'],
-        'road_condition': row['road_condition']
+        'road_condition': row['road_condition'] if row['road_condition'] != 'none' else 'safe'
     }, axis=1).tolist()
     
-    print(f"\n  • Original points: {len(nodes)}")
-
-    # MODIFICATION 5: Pre-process nodes to convert 'none' to 'safe'
-    nodes = normalize_road_conditions(nodes)
+    print(f"✓ Loaded {len(nodes)} data points")
     
     if len(nodes) < 2:
-        print("\nNot enough nodes to build a network.")
+        print("\n✗ Not enough nodes to build a network.")
         return
     
-    NEW_AVERAGING_THRESHOLD = 75 
+    # Build OSM road network
+    G = build_osm_road_network(nodes, network_type='drive')
     
-    print(f"\nBuilding graph (Averaging: {NEW_AVERAGING_THRESHOLD}m, 'none' -> 'safe')...")
+    # Map safety data to edges
+    G = map_safety_data_to_edges(G, nodes, max_distance=50)
     
-    G = build_weighted_road_network_graph(nodes, 
-                                          simplify=True, 
-                                          angle_threshold=15,
-                                          averaging_threshold=NEW_AVERAGING_THRESHOLD)
-    
-    print(f"\n✓ Graph built successfully!")
+    # Print statistics
     print_graph_statistics(G)
     
-    print("\nGenerating visualization...")
-    visualize_graph(G, filename='road_network_graph_final_colored.png')
+    # Visualize
+    visualize_graph(G, nodes)
+    
+    # Save graph
+    save_graph(G, 'osm_road_network.graphml')
     
     print("\n" + "=" * 60)
-    print("Processing complete!")
+    print("✓ Processing complete!")
     print("=" * 60)
+    print("\nYou can now use this graph for pathfinding with:")
+    print("  - nx.shortest_path(G, source, target, weight='weight')")
+    print("  - nx.dijkstra_path(G, source, target, weight='weight')")
+    print("  - nx.astar_path(G, source, target, weight='weight')")
 
 if __name__ == "__main__":
     main()
