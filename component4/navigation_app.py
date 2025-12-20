@@ -372,13 +372,13 @@ def main():
         route_visibility[i] = st.sidebar.checkbox(f"Show Route {i+1}", value=True, key=f"route_viz_{i}")
     
     # Calculate button
-    calculate_routes = st.sidebar.button("🔍 Calculate Routes", type="primary")
-    
+    if st.sidebar.button("🔍 Calculate Routes", type="primary"):
+        st.session_state['should_calculate'] = True        
     # ========================================================================
     # MAIN CONTENT: Route Calculation and Visualization
     # ========================================================================
     
-    if calculate_routes:
+    if st.session_state.get('should_calculate', False):
         with st.spinner("Finding nearest nodes..."):
             start_node, start_dist = find_nearest_node(G, start_lat, start_lon)
             end_node, end_dist = find_nearest_node(G, end_lat, end_lon)
