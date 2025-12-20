@@ -308,7 +308,7 @@ def main():
     # Input method selection
     input_method = st.sidebar.radio(
         "Select Input Method:",
-        ["Preset Locations", "Manual Coordinates", "Random Points"]
+        ["Preset Locations", "Select Nodes", "Random Points"]
     )
     
     if input_method == "Preset Locations":
@@ -326,16 +326,24 @@ def main():
         start_lat, start_lon = locations[start_loc]
         end_lat, end_lon = locations[end_loc]
         
-    elif input_method == "Manual Coordinates":
+    elif input_method == "Select Nodes":
+        st.sidebar.markdown("**Select Graph Nodes**")
+        
+        # Get all nodes and their positions
+        all_nodes = list(G.nodes())
+        
         col1, col2 = st.sidebar.columns(2)
         with col1:
-            st.markdown("**Start Point**")
-            start_lat = st.number_input("Latitude", value=df['latitude'].iloc[0], format="%.6f", key="start_lat")
-            start_lon = st.number_input("Longitude", value=df['longitude'].iloc[0], format="%.6f", key="start_lon")
+            start_node_select = st.selectbox("Start Node:", all_nodes, index=0, key="start_node_select")
         with col2:
-            st.markdown("**End Point**")
-            end_lat = st.number_input("Latitude", value=df['latitude'].iloc[-1], format="%.6f", key="end_lat")
-            end_lon = st.number_input("Longitude", value=df['longitude'].iloc[-1], format="%.6f", key="end_lon")
+            end_node_select = st.selectbox("End Node:", all_nodes, index=min(30, len(all_nodes)-1), key="end_node_select")
+        
+        # Get coordinates from selected nodes
+        start_lon, start_lat = G.nodes[start_node_select]['pos']
+        end_lon, end_lat = G.nodes[end_node_select]['pos']
+        
+        st.sidebar.info(f"Start Node {start_node_select}: ({start_lat:.5f}, {start_lon:.5f})\n\n"
+                       f"End Node {end_node_select}: ({end_lat:.5f}, {end_lon:.5f})")
     
     else:  # Random Points
         if st.sidebar.button("Generate Random Points"):
@@ -357,14 +365,20 @@ def main():
     show_road_network = st.sidebar.checkbox("Show Road Network", value=False)
     num_routes = st.sidebar.slider("Number of Alternative Routes", 1, 3, 3)
     
+    # Route visibility toggles
+    st.sidebar.markdown("**Route Visibility**")
+    route_visibility = {}
+    for i in range(3):
+        route_visibility[i] = st.sidebar.checkbox(f"Show Route {i+1}", value=True, key=f"route_viz_{i}")
+    
     # Calculate button
-    if st.sidebar.button("🔍 Calculate Routes", type="primary"):
-        st.session_state['should_calculate'] = True        
+    calculate_routes = st.sidebar.button("🔍 Calculate Routes", type="primary")
+    
     # ========================================================================
     # MAIN CONTENT: Route Calculation and Visualization
     # ========================================================================
     
-    if st.session_state.get('should_calculate', False):
+    if calculate_routes:
         with st.spinner("Finding nearest nodes..."):
             start_node, start_dist = find_nearest_node(G, start_lat, start_lon)
             end_node, end_dist = find_nearest_node(G, end_lat, end_lon)
@@ -424,6 +438,10 @@ def main():
                 # Add all routes with DISTINCT colors
                 route_display_colors = ['blue', 'purple', 'darkred']
                 for i, route in enumerate(routes):
+                    # Only add route if visibility is enabled
+                    if not route_visibility.get(i, False):
+                        continue
+                    
                     color = route_display_colors[i] if i < len(route_display_colors) else 'gray'
                     
                     # Get path coordinates
@@ -457,16 +475,21 @@ def main():
                 end_coords_actual = [G.nodes[end_node]['pos'][1], G.nodes[end_node]['pos'][0]]
                 add_markers_to_map(m, start_coords_actual, end_coords_actual)
                 
-                # Add legend with route colors
+                # Add legend with route colors (only show visible routes)
+                visible_routes = [i for i in range(len(routes)) if route_visibility.get(i, False)]
+                legend_lines = []
+                colors = ['blue', 'purple', 'darkred']
+                for i in visible_routes:
+                    color = colors[i] if i < len(colors) else 'gray'
+                    legend_lines.append(f'<span style="color:{color}; font-size:20px">━━</span> Route {i+1}<br>')
+                
                 legend_html = f'''
                 <div style="position: fixed; 
-                            bottom: 50px; right: 50px; width: 200px; height: 200px; 
+                            bottom: 50px; right: 50px; width: 200px; height: auto; 
                             background-color: white; border:2px solid grey; z-index:9999; 
                             font-size:14px; padding: 10px">
-                <b>Routes Found: {len(routes)}</b><br>
-                <span style="color:blue; font-size:20px">━━</span> Route 1<br>
-                {f'<span style="color:purple; font-size:20px">━━</span> Route 2<br>' if len(routes) > 1 else ''}
-                {f'<span style="color:darkred; font-size:20px">━━</span> Route 3<br>' if len(routes) > 2 else ''}
+                <b>Visible Routes: {len(visible_routes)}</b><br>
+                {''.join(legend_lines)}
                 <br>
                 <b>Road Conditions:</b><br>
                 <span style="color:green">●</span> Safe  
