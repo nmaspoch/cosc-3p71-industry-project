@@ -592,39 +592,41 @@ def main():
                     add_graph_edges_to_map(m, G, show_all_edges=True)
                 
                 # Add all routes with DISTINCT colors
-                route_display_colors = ['blue', 'purple', 'darkred']
-                for i, route in enumerate(routes):
-                    # Only add route if visibility is enabled
-                    if not route_visibility.get(i, False):
-                        continue
+                # Replace the route drawing loop in your main() with this:
+
+            for i, route in enumerate(routes):
+                # Only add route if visibility is enabled
+                if not route_visibility.get(i, False):
+                    continue
+                
+                path = route['path']
+                # Iterate through segments to color them individually
+                for j in range(len(path) - 1):
+                    u, v = path[j], path[j+1]
                     
-                    color = route_display_colors[i] if i < len(route_display_colors) else 'gray'
+                    # Get coordinates for this segment
+                    u_lon, u_lat = get_coords(G, u)
+                    v_lon, v_lat = get_coords(G, v)
+                    segment_coords = [[u_lat, u_lon], [v_lat, v_lon]]
                     
-                    # Get path coordinates
-                    path_coords = []
-                    for node in route['path']:
-                        lon, lat = get_coords(G, node)
-                        path_coords.append([lat, lon])
+                    # Determine segment color based on the edge data
+                    edge_data = G[u][v]
+                    penalty = edge_data.get('safety_penalty', 1.0)
                     
-                    # Create popup with travel time
-                    popup_html = f"""
-                    <div style="width: 200px">
-                        <b>Route {i+1}</b><br>
-                        <b>Classification:</b> {route['safety_classification']}<br>
-                        <b>Distance:</b> {route['actual_distance']:.0f}m<br>
-                        <b>Travel Time:</b> {route['travel_time']:.1f} min<br>
-                        <b>Safety Score:</b> {route['safety_probability']:.3f}<br>
-                        <b>Segments:</b> {len(route['path']) - 1}
-                    </div>
-                    """
-                    
-                    # Add to map with distinct color and higher weight for visibility
+                    if penalty <= 1.2:
+                        seg_color = 'green'
+                    elif penalty <= 2.0:
+                        seg_color = 'orange' # Yellow/Orange
+                    else:
+                        seg_color = 'red'
+                        
+                    # Add the individual segment to the map
                     folium.PolyLine(
-                        path_coords,
-                        color=color,
-                        weight=8 - (i * 2),  # First route thickest, others thinner
-                        opacity=0.8,
-                        popup=folium.Popup(popup_html, max_width=250)
+                        segment_coords,
+                        color=seg_color,
+                        weight=8 - (i * 2), # Maintain thickness difference for overlapping routes
+                        opacity=0.9,
+                        tooltip=f"Route {i+1} Segment: {edge_data.get('condition', 'safe')}"
                     ).add_to(m)
                 
                 # Add start/end markers
