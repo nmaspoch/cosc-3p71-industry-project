@@ -322,7 +322,7 @@ def main():
     edge_to_images = map_images_to_edges(G, df)
     
     # Step 4: Load YOLO model
-    model = load_yolo_model('yolov8n.pt')
+    model = load_yolo_model('component3/best.pt')
     
     # Step 5: Calculate safety scores
     edge_safety_scores = calculate_edge_safety_scores(G, edge_to_images, model, df)
