@@ -123,6 +123,7 @@ def find_alternative_routes(G, start_node, end_node, k=3, algorithm='Dijkstra'):
 def main():
     st.set_page_config(page_title="Smart City Navigation", page_icon="🚗", layout="wide")
     st.title("🚗 Smart City Road Safety Navigation System")
+    st.markdown("Click anywhere within the red dashed box on the map to select your start (green) and end (red) nodes. You can adjust the algorithm and number of routes in the sidebar before clicking the Calculate Routes button.")
     
     G = load_graph()
     df = pd.read_csv(Path(__file__).resolve().parent.parent / 'final_metadata.csv')
@@ -133,7 +134,7 @@ def main():
     # Sidebar Controls
     st.sidebar.header("Navigation Controls")
     algorithm = st.sidebar.radio("Algorithm:", ["Dijkstra", "A*"], key="algo_selection")
-    num_routes = st.sidebar.slider("Number of Alternatives", 1, 3, 3)
+    num_routes = st.sidebar.slider("Number of Routes", 1, 3, 3)
     
     # Auto-refresh when algorithm changes
     if st.session_state['start_node'] and st.session_state['end_node']:
@@ -172,7 +173,7 @@ def main():
     # 3. FLOATING LEGEND
     legend_html = '''
     <div style="position: fixed; bottom: 50px; left: 50px; width: 150px; background-color: white; 
-    border:2px solid grey; z-index:9999; font-size:14px; padding: 10px; border-radius: 5px;">
+    border:2px solid grey; z-index:9999; font-size:14px; padding: 10px; border-radius: 5px; color: black">
     <b>Safety Legend</b><br>
     <i style="background:green; width:10px; height:10px; display:inline-block;"></i> Safe<br>
     <i style="background:orange; width:10px; height:10px; display:inline-block;"></i> Possible Hazard<br>
