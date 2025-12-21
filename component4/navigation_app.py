@@ -10,6 +10,7 @@ from pathlib import Path
 import sys
 from datetime import datetime
 import random
+import time  # Added for execution time benchmarking
 
 project_root = Path(__file__).resolve().parent.parent
 if str(project_root) not in sys.path:
@@ -164,9 +165,10 @@ def calculate_travel_time(G, path):
     return total_time_hours * 60
 
 def find_route(G, start_node, end_node, algorithm='dijkstra'):
-    """Find the shortest weighted path"""
+    """Find the shortest weighted path and measure execution time."""
+    start_time = time.perf_counter()  # Start timer
     try:
-        if algorithm == 'astar':
+        if algorithm.lower() == 'a*':
             def heuristic(u, v):
                 u_lon, u_lat = get_coords(G, u)
                 v_lon, v_lat = get_coords(G, v)
@@ -177,14 +179,18 @@ def find_route(G, start_node, end_node, algorithm='dijkstra'):
             path = nx.dijkstra_path(G, start_node, end_node, weight='weight')
             path_length = nx.dijkstra_path_length(G, start_node, end_node, weight='weight')
         
+        end_time = time.perf_counter()
+        execution_time_ms = (end_time - start_time) * 1000  # Convert to ms
+        
         classification, prob, dist, color = calculate_route_safety(G, path)
         return {
             'path': path, 'weighted_cost': path_length, 'actual_distance': dist,
             'travel_time': calculate_travel_time(G, path), 'safety_classification': classification,
-            'safety_probability': prob, 'color': color, 'exists': True
+            'safety_probability': prob, 'color': color, 'exists': True,
+            'execution_time': execution_time_ms
         }
     except nx.NetworkXNoPath:
-        return {'exists': False}
+        return {'exists': False, 'execution_time': 0}
 
 def find_alternative_routes(G, start_node, end_node, k=3, algorithm='dijkstra'):
     routes = []
@@ -307,7 +313,7 @@ def main():
 
                 # Detailed Metrics Row
                 st.markdown(f"### 📊 Detailed Stats: {selected_route_name}")
-                m1, m2, m3, m4 = st.columns(4)
+                m1, m2, m3, m4, m5 = st.columns(5)
                 with m1:
                     st.metric("Total Distance", f"{active_route['actual_distance']:.0f}m")
                 with m2:
@@ -316,6 +322,8 @@ def main():
                     st.metric("Safety Probability", f"{active_route['safety_probability']:.3f}")
                 with m4:
                     st.metric("Safety Rating", active_route['safety_classification'])
+                with m5:
+                    st.metric("Algo Execution", f"{active_route['execution_time']:.3f} ms", help=f"Time taken by {algorithm} to find path")
 
                 # Map Rendering
                 m = create_base_folium_map(G, (start_lat+end_lat)/2, (start_lon+end_lon)/2)
@@ -367,7 +375,17 @@ def main():
                     if h:
                         st.warning(f"Hazard detected: {h['new_condition']} between node {h['edge'][0]} and {h['edge'][1]}")
                         if check_route_affected(active_route, h):
-                            st.error("🚨 YOUR CURRENT ROUTE IS AFFECTED! Re-routing recommended.")
+                            # Calculate Delay Impact
+                            G_affected = apply_hazard_to_graph(G, h)
+                            current_time = active_route['travel_time']
+                            
+                            # Find new travel time on the same path with new condition
+                            new_time = calculate_travel_time(G_affected, active_route['path'])
+                            delay_impact = new_time - current_time
+                            
+                            st.error(f"🚨 YOUR CURRENT ROUTE IS AFFECTED!")
+                            st.write(f"**Delay Impact:** +{delay_impact:.1f} minutes to your current trip.")
+                            st.info("💡 Re-routing recommended to find a safer or faster alternative.")
 
 if __name__ == "__main__":
     main()
