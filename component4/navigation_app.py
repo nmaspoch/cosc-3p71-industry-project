@@ -34,7 +34,6 @@ def load_graph():
         G = ox.convert.to_digraph(G_raw, weight='weight')
         
         for u, v, data in G.edges(data=True):
-            # Strict casting to float for all routing attributes
             data['raw_distance'] = float(data.get('length', 100.0))
             data['condition'] = data.get('road_condition', 'safe')
             try:
@@ -74,7 +73,6 @@ def find_nearest_node(G, target_lat, target_lon):
     return nearest_node, min_dist
 
 def calculate_route_safety(G, path):
-    """Classifies route based on probability thresholds."""
     if len(path) < 2: return 'Safe', 0.1, 0, 'green'
     total_dist, weighted_safety = 0, 0
     for i in range(len(path) - 1):
@@ -86,7 +84,7 @@ def calculate_route_safety(G, path):
     
     avg_p = weighted_safety / total_dist if total_dist > 0 else 1.0
     
-    # Thresholds: Safe (p<0.3), Possible (0.3<=p<0.7), Hazardous (p>=0.7)
+    # Thresholds: Safe (p<0.3), Possible (0.3<=p<0.7), Hazardous (p>=0.7) [cite: 149, 179]
     if avg_p <= 1.2: return 'Safe', (avg_p-1.0)/2.0, total_dist, 'green'
     elif avg_p <= 2.0: return 'Possibly Hazardous', 0.3+(avg_p-1.2)*0.5, total_dist, 'orange'
     return 'Hazardous', min(0.7+(avg_p-2.0)*0.3, 1.0), total_dist, 'red'
@@ -110,10 +108,9 @@ def find_alternative_routes(G, start_node, end_node, k=3, algorithm='Dijkstra'):
             routes.append({
                 'path': path, 'actual_distance': dist, 'safety_classification': cls, 
                 'safety_probability': prob, 'color': color, 'exists': True, 
-                'execution_time': exec_ms  # Restored execution time metric
+                'execution_time': exec_ms 
             })
             
-            # Penalize edges for alternative routing
             for j in range(len(path)-1):
                 G_temp[path[j]][path[j+1]]['weight'] *= 10
         except nx.NetworkXNoPath: break
@@ -133,27 +130,46 @@ def main():
     for key in ['start_node', 'end_node', 'routes', 'hazard']:
         if key not in st.session_state: st.session_state[key] = None
 
+    # Sidebar Controls
     st.sidebar.header("Navigation Controls")
-    algorithm = st.sidebar.radio("Algorithm:", ["Dijkstra", "A*"])
+    algorithm = st.sidebar.radio("Algorithm:", ["Dijkstra", "A*"], key="algo_selection")
     num_routes = st.sidebar.slider("Number of Alternatives", 1, 3, 3)
     
+    # Auto-refresh when algorithm changes
+    if st.session_state['start_node'] and st.session_state['end_node']:
+        st.session_state['routes'] = find_alternative_routes(G, st.session_state['start_node'], st.session_state['end_node'], k=num_routes, algorithm=algorithm)
+
     if st.sidebar.button("Clear Selections", use_container_width=True):
         st.session_state.update({'start_node': None, 'end_node': None, 'routes': None, 'hazard': None})
         st.rerun()
 
-    # Map Creation
+    # Calculate Bounding Box
+    lats = [float(data.get('y') or data.get('lat')) for _, data in G.nodes(data=True)]
+    lons = [float(data.get('x') or data.get('lon')) for _, data in G.nodes(data=True)]
+    bounds = [[min(lats), min(lons)], [max(lats), max(lons)]]
+
     center_lat, center_lon = df.iloc[0]['latitude'], df.iloc[0]['longitude']
     m = folium.Map(location=[center_lat, center_lon], zoom_start=14)
 
-    # 1. ALWAYS VISIBLE ROAD NETWORK (Grey Skeleton)
+    # 1. ALWAYS VISIBLE ROAD NETWORK
     road_layer = folium.FeatureGroup(name="Road Network")
-    edge_list = list(G.edges(data=True))
-    for u, v, data in edge_list[:800]: 
+    for u, v, data in list(G.edges(data=True))[:800]: 
         u_coords, v_coords = get_node_coords(G, u), get_node_coords(G, v)
-        folium.PolyLine([u_coords, v_coords], color="grey", weight=1, opacity=0.3).add_to(road_layer)
+        folium.PolyLine([u_coords, v_coords], color="darkblue", weight=2, opacity=0.4).add_to(road_layer)
     road_layer.add_to(m)
 
-    # 2. FLOATING LEGEND
+    # 2. SELECTION AREA BOX (FIXED FOR CLICKS)
+    folium.Rectangle(
+        bounds=bounds,
+        color="red",
+        weight=2,
+        fill=True,
+        fill_opacity=0.05,
+        dash_array='5, 5',
+        pointer_events=False  # THIS ALLOWS CLICKING THROUGH THE BOX
+    ).add_to(m)
+
+    # 3. FLOATING LEGEND
     legend_html = '''
     <div style="position: fixed; bottom: 50px; left: 50px; width: 150px; background-color: white; 
     border:2px solid grey; z-index:9999; font-size:14px; padding: 10px; border-radius: 5px;">
@@ -164,7 +180,7 @@ def main():
     </div>'''
     m.get_root().html.add_child(folium.Element(legend_html))
 
-    # 3. ROUTE RENDERING & METRICS
+    # 4. ROUTE RENDERING & METRICS
     if st.session_state['routes']:
         selected_route_name = st.sidebar.selectbox("Active Route View:", [f"Route {i+1}" for i in range(len(st.session_state['routes']))])
         idx = int(selected_route_name.split()[-1]) - 1
@@ -177,24 +193,21 @@ def main():
             color = 'green' if penalty <= 1.2 else 'orange' if penalty <= 2.0 else 'red'
             folium.PolyLine([u_coords, v_coords], color=color, weight=6, opacity=0.8).add_to(m)
 
-        # Restored Metrics Dashboard
-        st.markdown(f"### 📊 Analysis: {selected_route_name}")
-        c1, c2, c3, c4, c5 = st.columns(5)
+        st.markdown(f"### 📊 Live Analysis: {selected_route_name}")
+        c1, c2, c3, c4 = st.columns(4)
         c1.metric("Execution Time", f"{active_r['execution_time']:.3f} ms")
         c2.metric("Distance", f"{active_r['actual_distance']:.0f}m")
         c3.metric("Safety Score", f"{active_r['safety_probability']:.2f}")
         c4.metric("Status", active_r['safety_classification'])
 
-    # Markers
     if st.session_state['start_node']:
         folium.Marker(get_node_coords(G, st.session_state['start_node']), icon=folium.Icon(color='green', icon='play', prefix='fa')).add_to(m)
     if st.session_state['end_node']:
         folium.Marker(get_node_coords(G, st.session_state['end_node']), icon=folium.Icon(color='red', icon='stop', prefix='fa')).add_to(m)
 
-    # RENDER MAP (Responsive width)
     map_data = st_folium(m, width=None, height=600, use_container_width=True, key="nav_map")
     
-    # Click Logic
+    # Click processing
     if map_data.get('last_clicked'):
         clicked_node, _ = find_nearest_node(G, map_data['last_clicked']['lat'], map_data['last_clicked']['lng'])
         if st.session_state['start_node'] is None:
@@ -204,12 +217,6 @@ def main():
             st.session_state['end_node'] = clicked_node
             st.rerun()
 
-    if st.session_state['start_node'] and st.session_state['end_node']:
-        if st.sidebar.button("🔍 Calculate Routes", type="primary", use_container_width=True):
-            st.session_state['routes'] = find_alternative_routes(G, st.session_state['start_node'], st.session_state['end_node'], k=num_routes, algorithm=algorithm)
-            st.rerun()
-
-    # Hazard Simulation
     st.markdown("---")
     if st.button("🎲 Simulate Random Hazard"):
         st.session_state['hazard'] = random.choice(list(G.edges()))
