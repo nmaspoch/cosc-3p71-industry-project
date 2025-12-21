@@ -4,15 +4,9 @@ import pandas as pd
 import numpy as np
 from pathlib import Path
 from math import radians, sin, cos, sqrt, atan2
-import sys
-from pathlib import Path
+import osmnx as ox
+import networkx as nx
 from ultralytics import YOLO
-
-parent_dir = Path(__file__).parent.parent
-sys.path.insert(0, str(parent_dir))
-
-# Import graph building functions
-from component2.graph import build_weighted_road_network_graph, update_edge_safety_from_yolo, normalize_road_conditions
 
 def calculate_haversine_distance(lat1, lon1, lat2, lon2, earth_radius_m=6371000):
     """Calculate Haversine distance between two points (in meters)."""
@@ -36,54 +30,44 @@ def point_to_line_segment_distance(point_lat, point_lon, line_start_lat, line_st
     Calculate perpendicular distance from a point to a line segment.
     Returns distance in meters.
     """
-    # Convert to radians for calculation
     px, py = point_lon, point_lat
     ax, ay = line_start_lon, line_start_lat
     bx, by = line_end_lon, line_end_lat
     
-    # Vector from A to B
     AB_x = bx - ax
     AB_y = by - ay
-    
-    # Vector from A to Point
     AP_x = px - ax
     AP_y = py - ay
     
-    # Calculate dot products
     AB_AB = AB_x * AB_x + AB_y * AB_y
     AP_AB = AP_x * AB_x + AP_y * AB_y
     
     if AB_AB == 0:
-        # Line segment is actually a point
         return calculate_haversine_distance(point_lat, point_lon, line_start_lat, line_start_lon)
     
-    # Calculate parameter t (projection of point onto line)
     t = max(0, min(1, AP_AB / AB_AB))
-    
-    # Find closest point on line segment
     closest_x = ax + t * AB_x
     closest_y = ay + t * AB_y
     
-    # Calculate distance from point to closest point
     return calculate_haversine_distance(point_lat, point_lon, closest_y, closest_x)
 
-def map_images_to_edges(G, images_df):
+def load_osm_graph(filepath='osm_road_network.graphml'):
+    """Load the OSM graph."""
+    print(f"\nLoading OSM graph from {filepath}...")
+    G = ox.load_graphml(filepath)
+    print(f"✓ Graph loaded: {G.number_of_nodes()} nodes, {G.number_of_edges()} edges")
+    return G
+
+def map_images_to_osm_edges(G, images_df, max_distance=50):
     """
-    Map each image to its nearest graph edge.
-    Returns: dict mapping (u, v) edge tuples to lists of image indices
+    Map each image to its nearest OSM graph edge.
+    Returns: dict mapping (u, v, key) edge tuples to lists of image indices
     """
     print("\n" + "="*60)
-    print("MAPPING IMAGES TO GRAPH EDGES")
+    print("MAPPING IMAGES TO OSM GRAPH EDGES")
     print("="*60)
     
     edge_to_images = {}
-    edges = list(G.edges())
-    
-    # Initialize all edges with empty lists
-    for edge in edges:
-        u, v = edge
-        if u < v:  # Only store one direction to avoid duplicates
-            edge_to_images[(u, v)] = []
     
     print(f"\nProcessing {len(images_df)} images...")
     
@@ -95,14 +79,11 @@ def map_images_to_edges(G, images_df):
         min_distance = float('inf')
         nearest_edge = None
         
-        # Find nearest edge
-        for u, v in edges:
-            if u >= v:  # Skip reverse edges
-                continue
-                
-            # Get node positions
-            u_lon, u_lat = G.nodes[u]['pos']
-            v_lon, v_lat = G.nodes[v]['pos']
+        # Find nearest edge (including key for MultiDiGraph)
+        for u, v, key in G.edges(keys=True):
+            # Get node positions from OSM graph
+            u_lat, u_lon = G.nodes[u]['y'], G.nodes[u]['x']
+            v_lat, v_lon = G.nodes[v]['y'], G.nodes[v]['x']
             
             # Calculate distance from image to this edge
             dist = point_to_line_segment_distance(
@@ -113,10 +94,12 @@ def map_images_to_edges(G, images_df):
             
             if dist < min_distance:
                 min_distance = dist
-                nearest_edge = (u, v)
+                nearest_edge = (u, v, key)
         
-        # Assign image to nearest edge
-        if nearest_edge and min_distance < 100:  # Within 100m threshold
+        # Assign image to nearest edge if within threshold
+        if nearest_edge and min_distance < max_distance:
+            if nearest_edge not in edge_to_images:
+                edge_to_images[nearest_edge] = []
             edge_to_images[nearest_edge].append(img_index)
         
         if (idx + 1) % 50 == 0:
@@ -124,12 +107,13 @@ def map_images_to_edges(G, images_df):
     
     # Print statistics
     total_mapped = sum(len(imgs) for imgs in edge_to_images.values())
-    edges_with_images = sum(1 for imgs in edge_to_images.values() if len(imgs) > 0)
+    edges_with_images = len(edge_to_images)
     
     print(f"\n✓ Mapping complete!")
     print(f"  • Total images mapped: {total_mapped}/{len(images_df)}")
-    print(f"  • Edges with images: {edges_with_images}/{len(edge_to_images)}")
-    print(f"  • Avg images per edge: {total_mapped/edges_with_images:.1f}")
+    print(f"  • Edges with images: {edges_with_images}/{G.number_of_edges()}")
+    if edges_with_images > 0:
+        print(f"  • Avg images per edge: {total_mapped/edges_with_images:.1f}")
     
     return edge_to_images
 
@@ -143,52 +127,48 @@ def load_yolo_model(model_path='yolov8n.pt'):
 def run_yolo_inference_single(model, image_path):
     """
     Run YOLO inference on a single image.
-    Returns probability score (0-1) for hazard detection.
-    
-    Based on road_condition classes: safe, minor_issues, major_issues, major_problems
+    Returns safety penalty multiplier (1.0 = safe, higher = more hazardous).
     """
     try:
         results = model(image_path, verbose=False)
         
         if len(results) > 0 and len(results[0].boxes) > 0:
-            # Get highest confidence detection
             confidences = results[0].boxes.conf.cpu().numpy()
             classes = results[0].boxes.cls.cpu().numpy()
             
-            # Find the detection with highest confidence
             max_idx = np.argmax(confidences)
             max_conf = float(confidences[max_idx])
             predicted_class = int(classes[max_idx])
             
-            # Map class to probability based on severity
-            # Typical mapping: 0=safe, 1=minor_issues, 2=major_issues, 3=major_problems
-            class_to_probability = {
-                0: 0.1,   # safe
-                1: 0.5,   # minor_issues
-                2: 0.8,   # major_issues
-                3: 0.9    # major_problems
+            # Map YOLO class to safety penalty
+            # 0=safe (1.0), 1=minor_issues (1.5), 2=major_issues (3.0), 3=major_problems (5.0)
+            class_to_penalty = {
+                0: 1.0,   # safe
+                1: 1.5,   # minor_issues
+                2: 3.0,   # major_issues
+                3: 5.0    # major_problems
             }
             
-            base_prob = class_to_probability.get(predicted_class, 0.5)
+            base_penalty = class_to_penalty.get(predicted_class, 1.0)
             # Weight by confidence
-            return base_prob * max_conf
+            return 1.0 + (base_penalty - 1.0) * max_conf
         else:
-            # No detections = safe road
-            return 0.1
+            return 1.0  # No detections = safe
             
     except Exception as e:
         print(f"  Warning: Error processing {image_path}: {e}")
-        return 0.2  # Default to relatively safe if error
+        return 1.0
 
 def calculate_edge_safety_scores(G, edge_to_images, model, images_df):
     """
-    Run YOLO inference on all images and calculate safety score per edge.
+    Run YOLO inference on all images and calculate safety penalty per edge.
+    Returns dict mapping (u, v, key) -> penalty multiplier
     """
     print("\n" + "="*60)
     print("CALCULATING EDGE SAFETY SCORES WITH YOLO")
     print("="*60)
     
-    edge_safety_scores = {}
+    edge_safety_penalties = {}
     total_edges = len(edge_to_images)
     processed = 0
     
@@ -196,76 +176,103 @@ def calculate_edge_safety_scores(G, edge_to_images, model, images_df):
         processed += 1
         
         if not image_indices:
-            # No images for this edge, use default safe score
-            edge_safety_scores[edge_tuple] = 0.2
+            edge_safety_penalties[edge_tuple] = 1.0
             continue
         
-        probabilities = []
+        penalties = []
         
         for img_idx in image_indices:
-            # Find image by index in dataframe
             img_row = images_df[images_df['index'] == img_idx]
             
             if len(img_row) == 0:
                 continue
             
-            # Get filename directly from metadata
             img_filename = img_row.iloc[0]['filename']
             img_path = Path('dataset/images/all') / img_filename
             
             if img_path.exists():
-                prob = run_yolo_inference_single(model, str(img_path))
-                probabilities.append(prob)
+                penalty = run_yolo_inference_single(model, str(img_path))
+                penalties.append(penalty)
             else:
                 print(f"  Warning: Image not found: {img_path}")
         
-        if probabilities:
-            # Aggregate scores - using mean, but could use max or weighted average
-            avg_prob = sum(probabilities) / len(probabilities)
-            edge_safety_scores[edge_tuple] = avg_prob
+        if penalties:
+            # Use MAXIMUM penalty (worst case) for safety-critical routing
+            max_penalty = max(penalties)
+            edge_safety_penalties[edge_tuple] = max_penalty
             
             if processed % 10 == 0:
-                print(f"  [{processed}/{total_edges}] Edge {edge_tuple}: "
-                      f"{len(probabilities)} images, prob={avg_prob:.3f}")
+                print(f"  [{processed}/{total_edges}] Edge {edge_tuple[:2]}: "
+                      f"{len(penalties)} images, penalty={max_penalty:.3f}")
         else:
-            edge_safety_scores[edge_tuple] = 0.2
+            edge_safety_penalties[edge_tuple] = 1.0
     
-    print(f"\n✓ Calculated safety scores for {len(edge_safety_scores)} edges")
+    print(f"\n✓ Calculated safety penalties for {len(edge_safety_penalties)} edges")
     
     # Print distribution
-    scores = list(edge_safety_scores.values())
-    print(f"\nScore Distribution:")
-    print(f"  • Min:  {min(scores):.3f}")
-    print(f"  • Mean: {np.mean(scores):.3f}")
-    print(f"  • Max:  {max(scores):.3f}")
-    print(f"  • Safe (p<0.3):           {sum(1 for s in scores if s < 0.3)}")
-    print(f"  • Possibly Hazardous:     {sum(1 for s in scores if 0.3 <= s < 0.7)}")
-    print(f"  • Hazardous (p>=0.7):     {sum(1 for s in scores if s >= 0.7)}")
+    penalties = list(edge_safety_penalties.values())
+    print(f"\nPenalty Distribution:")
+    print(f"  • Min:  {min(penalties):.3f}")
+    print(f"  • Mean: {np.mean(penalties):.3f}")
+    print(f"  • Max:  {max(penalties):.3f}")
+    print(f"  • Safe (p≤1.2):           {sum(1 for p in penalties if p <= 1.2)}")
+    print(f"  • Minor Issues (1.2<p<2): {sum(1 for p in penalties if 1.2 < p < 2)}")
+    print(f"  • Hazardous (p≥2):        {sum(1 for p in penalties if p >= 2)}")
     
-    return edge_safety_scores
+    return edge_safety_penalties
 
-def save_outputs(G, edge_to_images, edge_safety_scores):
-    """Save all outputs to files."""
+def update_graph_with_yolo_scores(G, edge_safety_penalties):
+    """
+    Update OSM graph edges with YOLO-derived safety penalties.
+    Correctly handles MultiDiGraph with edge keys.
+    """
     print("\n" + "="*60)
-    print("SAVING OUTPUTS")
+    print("UPDATING GRAPH WITH YOLO SCORES")
     print("="*60)
     
-    output_dir = Path('component4/data')
-    output_dir.mkdir(parents=True, exist_ok=True)
+    updated_count = 0
     
-    # Update graph with YOLO scores
-    print("\nUpdating graph with YOLO-based weights...")
-    update_edge_safety_from_yolo(G, edge_safety_scores)
+    for (u, v, key), penalty in edge_safety_penalties.items():
+        if G.has_edge(u, v, key):
+            # Get original length
+            length = G[u][v][key].get('length', 100.0)
+            
+            # Update edge attributes
+            G[u][v][key]['yolo_safety_penalty'] = penalty
+            G[u][v][key]['safety_penalty'] = penalty  # Keep consistent naming
+            
+            # Combine with existing penalty if present
+            existing_penalty = G[u][v][key].get('safety_penalty_manual', 1.0)
+            combined_penalty = max(penalty, existing_penalty)  # Use worst case
+            
+            # Update weight: distance × combined_penalty
+            G[u][v][key]['weight'] = length * combined_penalty
+            G[u][v][key]['has_yolo_data'] = True
+            
+            updated_count += 1
     
-    # Save enhanced graph using pickle
-    graph_yolo_path = output_dir / 'graph_with_yolo.gpickle'
-    with open(graph_yolo_path, 'wb') as f:
-        pickle.dump(G, f, pickle.HIGHEST_PROTOCOL)
-    print(f"✓ YOLO-enhanced graph saved to: {graph_yolo_path}")
+    print(f"✓ Updated {updated_count} edges with YOLO scores")
+    
+    # Ensure all edges have consistent attributes
+    for u, v, key in G.edges(keys=True):
+        if 'has_yolo_data' not in G[u][v][key]:
+            length = G[u][v][key].get('length', 100.0)
+            G[u][v][key]['yolo_safety_penalty'] = 1.0
+            G[u][v][key]['safety_penalty'] = 1.0
+            G[u][v][key]['weight'] = length * 1.0
+            G[u][v][key]['has_yolo_data'] = False
+    
+    return G
+
+def save_graph(G, filename='osm_road_network_with_yolo.graphml'):
+    """Save the updated graph."""
+    print(f"\n✓ Saving graph to {filename}...")
+    ox.save_graphml(G, filepath=filename)
+    print(f"✓ Graph saved successfully")
 
 def main():
     print("="*60)
-    print("COMPONENT 4: EDGE SAFETY CALCULATION WITH YOLO")
+    print("YOLO SAFETY SCORE INTEGRATION")
     print("="*60)
     
     # Step 1: Load metadata
@@ -277,42 +284,24 @@ def main():
         print("Error: final_metadata.csv not found")
         return
     
-    # Step 2: Build base graph
-    print("\nStep 2: Building base graph from metadata...")
-    
-    if 'index' in df.columns:
-        df = df.sort_values('index').reset_index(drop=True)
-    
-    nodes = df.apply(lambda row: {
-        'original_index': row['index'] if 'index' in row else row.name,
-        'latitude': row['latitude'],
-        'longitude': row['longitude'],
-        'road_condition': row['road_condition']
-    }, axis=1).tolist()
-    
-    nodes = normalize_road_conditions(nodes)
-    G = build_weighted_road_network_graph(nodes, simplify=True, 
-                                         angle_threshold=15,
-                                         averaging_threshold=75)
-    print(f"✓ Graph built with {G.number_of_nodes()} nodes, {G.number_of_edges()} edges")
+    # Step 2: Load OSM graph
+    print("\nStep 2: Loading OSM graph...")
+    G = load_osm_graph('osm_road_network.graphml')
     
     # Step 3: Map images to edges
-    edge_to_images = map_images_to_edges(G, df)
+    edge_to_images = map_images_to_osm_edges(G, df, max_distance=50)
     
     # Step 4: Load YOLO model
     model = load_yolo_model('component3/best.pt')
     
     # Step 5: Calculate safety scores
-    edge_safety_scores = calculate_edge_safety_scores(G, edge_to_images, model, df)
+    edge_safety_penalties = calculate_edge_safety_scores(G, edge_to_images, model, df)
     
-    # Step 6: Save everything
-    save_outputs(G, edge_to_images, edge_safety_scores)
+    # Step 6: Update graph with YOLO scores
+    G = update_graph_with_yolo_scores(G, edge_safety_penalties)
     
-    print("\n" + "="*60)
-    print("✓ PROCESSING COMPLETE!")
-    print("="*60)
-    print("\nGenerated files:")
-    print("  • component4/data/graph_with_yolo.gpickle")
+    # Step 7: Save updated graph
+    save_graph(G, 'osm_road_network_with_yolo.graphml')
 
 if __name__ == "__main__":
     main()

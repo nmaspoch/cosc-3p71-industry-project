@@ -25,9 +25,9 @@ from component2.graph import calculate_haversine_distance
 @st.cache_resource
 def load_graph():
     """Load graph and ensure weights are numeric to prevent TypeErrors."""
-    graph_path = Path('osm_road_network.graphml')
+    graph_path = Path('osm_road_network_with_yolo.graphml')
     if not graph_path.exists():
-        st.error("❌ 'osm_road_network.graphml' not found.")
+        st.error("❌ 'osm_road_network_with_yolo.graphml' not found.")
         return None
     try:
         G_raw = ox.load_graphml(filepath=str(graph_path))

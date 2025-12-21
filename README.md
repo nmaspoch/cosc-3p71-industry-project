@@ -53,6 +53,7 @@ $ pip install -r requirements.txt
 
 ### 4. Intelligent Navigation System
 
+- [graph.py](/component2/graph.py) is used to generate raw network file and [calculate_edge_safety.py](/component4/calculate_edge_safety.py) is used to integrate YOLO training data as part of weights
 - [Navigation system implementation](/component4/navigation_app.py)
 - Navigation system can be accessed locally or online:
 
