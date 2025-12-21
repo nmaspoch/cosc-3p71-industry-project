@@ -20,7 +20,7 @@ demonstrates:
 ## Setup
 
 - Clone the repository
-- Install dependencies (requirements.txt)
+- Install dependencies
 
 ```
 $ pip install -r requirements.txt
@@ -44,11 +44,11 @@ $ pip install -r requirements.txt
 ### 3. AI Model Development and Fine-Tuning
 
 - YOLOv8 model was used
-- The following are all found in the component3 folder:
-  - Trained model files (best.pt)
+- The following are all found in the [component3](/component3/) folder:
+  - Trained model files
   - [Training](/component3/TRAIN.py) and [evaluation](/component3/EVALUATION.py) scripts
   - [Performance metrics and analysis report](/component3/YOLOv8_Performance_Analysis_Report.pdf)
-  - [Model inference pipeline](/component3/YOLOv8_Performance_Analysis_Report.pdf)
+  - [Model inference pipeline](/component3/INFERENCE.py)
   - [Results of runs](/runs/)
 
 ### 4. Intelligent Navigation System
