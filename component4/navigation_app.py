@@ -84,7 +84,7 @@ def calculate_route_safety(G, path):
     
     avg_p = weighted_safety / total_dist if total_dist > 0 else 1.0
     
-    # Thresholds: Safe (p<0.3), Possible (0.3<=p<0.7), Hazardous (p>=0.7) [cite: 149, 179]
+    # Thresholds: Safe (p<1.2), Possible (1.2<p<2.0), Hazardous (p>=2.0)
     if avg_p <= 1.2: return 'Safe', (avg_p-1.0)/2.0, total_dist, 'green'
     elif avg_p <= 2.0: return 'Possibly Hazardous', 0.3+(avg_p-1.2)*0.5, total_dist, 'orange'
     return 'Hazardous', min(0.7+(avg_p-2.0)*0.3, 1.0), total_dist, 'red'
@@ -128,8 +128,9 @@ def main():
     G = load_graph()
     df = pd.read_csv(Path(__file__).resolve().parent.parent / 'final_metadata.csv')
     
-    for key in ['start_node', 'end_node', 'routes', 'hazard']:
-        if key not in st.session_state: st.session_state[key] = None
+    # Initialize session state with the missing key
+    for key in ['start_node', 'end_node', 'routes', 'hazard', 'active_route_selection']:
+        if key not in st.session_state: st.session_state[key] = "Route 1" if key == 'active_route_selection' else None
 
     # Sidebar Controls
     st.sidebar.header("Navigation Controls")
@@ -159,7 +160,7 @@ def main():
         folium.PolyLine([u_coords, v_coords], color="darkblue", weight=2, opacity=0.4).add_to(road_layer)
     road_layer.add_to(m)
 
-    # 2. SELECTION AREA BOX (FIXED FOR CLICKS)
+    # 2. SELECTION AREA BOX
     folium.Rectangle(
         bounds=bounds,
         color="red",
@@ -167,7 +168,7 @@ def main():
         fill=True,
         fill_opacity=0.05,
         dash_array='5, 5',
-        pointer_events=False  # THIS ALLOWS CLICKING THROUGH THE BOX
+        pointer_events=False
     ).add_to(m)
 
     # 3. FLOATING LEGEND
@@ -183,7 +184,11 @@ def main():
 
     # 4. ROUTE RENDERING & METRICS
     if st.session_state['routes']:
-        selected_route_name = st.sidebar.selectbox("Active Route View:", [f"Route {i+1}" for i in range(len(st.session_state['routes']))])
+        selected_route_name = st.sidebar.selectbox(
+            "Active Route View:", 
+            [f"Route {i+1}" for i in range(len(st.session_state['routes']))],
+            key="active_route_selection"
+        )
         idx = int(selected_route_name.split()[-1]) - 1
         active_r = st.session_state['routes'][idx]
 
@@ -205,6 +210,19 @@ def main():
         folium.Marker(get_node_coords(G, st.session_state['start_node']), icon=folium.Icon(color='green', icon='play', prefix='fa')).add_to(m)
     if st.session_state['end_node']:
         folium.Marker(get_node_coords(G, st.session_state['end_node']), icon=folium.Icon(color='red', icon='stop', prefix='fa')).add_to(m)
+    
+    # Hazard Marker logic with safety check
+    if st.session_state.get('hazard') and st.session_state.get('routes'):
+        current_selection = st.session_state.get('active_route_selection', "Route 1")
+        viewing_idx = int(current_selection.split()[-1]) - 1
+        
+        if st.session_state['hazard']['route_idx'] == viewing_idx:
+            h_u, _ = st.session_state['hazard']['edge']
+            folium.Marker(
+                get_node_coords(G, h_u),
+                icon=folium.Icon(color='orange', icon='exclamation-triangle', prefix='fa'),
+                tooltip="Hazardous Segment Start"
+            ).add_to(m)
 
     map_data = st_folium(m, width=None, height=600, use_container_width=True, key="nav_map")
     
@@ -218,11 +236,26 @@ def main():
             st.session_state['end_node'] = clicked_node
             st.rerun()
 
+    # Hazard Simulation Logic with safety checks
     st.markdown("---")
-    if st.button("🎲 Simulate Random Hazard"):
-        st.session_state['hazard'] = random.choice(list(G.edges()))
-        st.warning(f"🚨 Hazard detected near node {st.session_state['hazard'][0]}. Safety re-routing advised.")
-        st.rerun()
+    if st.session_state['routes']:
+        current_selection = st.session_state.get('active_route_selection', "Route 1")
+        current_idx = int(current_selection.split()[-1]) - 1
+        current_route = st.session_state['routes'][current_idx]
+        
+        if current_route['safety_classification'] in ['Possibly Hazardous', 'Hazardous']:
+            if st.button(f"🎲 Simulate Hazard on {current_selection}"):
+                path = current_route['path']
+                if len(path) > 1:
+                    i = random.randint(0, len(path) - 2)
+                    u, v = path[i], path[i+1]
+                    st.session_state['hazard'] = {'edge': (u, v), 'route_idx': current_idx}
+                    st.warning(f"🚨 Hazard simulated on {current_selection}!")
+                    st.rerun()
+        else:
+            st.info("✅ This route is classified as Safe. No hazards available for simulation.")
+    else:
+        st.info("Calculate a route first to enable hazard controls.")
 
 if __name__ == "__main__":
     main()
