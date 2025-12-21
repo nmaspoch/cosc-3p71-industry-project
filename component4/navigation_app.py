@@ -147,8 +147,19 @@ def main():
         st.rerun()
 
     # Calculate Bounding Box
-    lats = [float(data.get('y') or data.get('lat')) for _, data in G.nodes(data=True)]
-    lons = [float(data.get('x') or data.get('lon')) for _, data in G.nodes(data=True)]
+    lats = []
+    lons = []
+    for _, data in G.nodes(data=True):
+        lat = data.get('y') or data.get('lat')
+        lon = data.get('x') or data.get('lon')
+        if lat is not None and lon is not None:
+            lats.append(float(lat))
+            lons.append(float(lon))
+
+    # Add a safety check
+    if not lats or not lons:
+        st.error("❌ No valid coordinates found in graph nodes.")
+        return
     bounds = [[min(lats), min(lons)], [max(lats), max(lons)]]
 
     center_lat, center_lon = df.iloc[0]['latitude'], df.iloc[0]['longitude']
