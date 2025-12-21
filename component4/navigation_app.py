@@ -19,7 +19,7 @@ if str(project_root) not in sys.path:
 from component2.graph import calculate_haversine_distance
 
 # ============================================================================
-# DATA LOADING (FIXED FOR TYPE ERROR)
+# DATA LOADING
 # ============================================================================
 
 @st.cache_resource
@@ -128,9 +128,10 @@ def main():
     G = load_graph()
     df = pd.read_csv(Path(__file__).resolve().parent.parent / 'final_metadata.csv')
     
-    # Initialize session state with the missing key
-    for key in ['start_node', 'end_node', 'routes', 'hazard', 'active_route_selection']:
-        if key not in st.session_state: st.session_state[key] = "Route 1" if key == 'active_route_selection' else None
+    # Initialize session state keys
+    for key in ['start_node', 'end_node', 'routes', 'hazard', 'active_route_selection', 'old_distance']:
+        if key not in st.session_state: 
+            st.session_state[key] = "Route 1" if key == 'active_route_selection' else None
 
     # Sidebar Controls
     st.sidebar.header("Navigation Controls")
@@ -138,11 +139,11 @@ def main():
     num_routes = st.sidebar.slider("Number of Routes", 1, 3, 3)
     
     # Auto-refresh when algorithm changes
-    if st.session_state['start_node'] and st.session_state['end_node']:
+    if st.session_state['start_node'] and st.session_state['end_node'] and st.session_state['routes'] is None:
         st.session_state['routes'] = find_alternative_routes(G, st.session_state['start_node'], st.session_state['end_node'], k=num_routes, algorithm=algorithm)
 
     if st.sidebar.button("Clear Selections", use_container_width=True):
-        st.session_state.update({'start_node': None, 'end_node': None, 'routes': None, 'hazard': None})
+        st.session_state.update({'start_node': None, 'end_node': None, 'routes': None, 'hazard': None, 'old_distance': None})
         st.rerun()
 
     # Calculate Bounding Box
@@ -153,14 +154,14 @@ def main():
     center_lat, center_lon = df.iloc[0]['latitude'], df.iloc[0]['longitude']
     m = folium.Map(location=[center_lat, center_lon], zoom_start=14)
 
-    # 1. ALWAYS VISIBLE ROAD NETWORK
+    # 1. ROAD NETWORK SKELETON
     road_layer = folium.FeatureGroup(name="Road Network")
     for u, v, data in list(G.edges(data=True))[:800]: 
         u_coords, v_coords = get_node_coords(G, u), get_node_coords(G, v)
         folium.PolyLine([u_coords, v_coords], color="darkblue", weight=2, opacity=0.4).add_to(road_layer)
     road_layer.add_to(m)
 
-    # 2. SELECTION AREA BOX
+    # 2. SELECTION AREA BOUNDS
     folium.Rectangle(
         bounds=bounds,
         color="red",
@@ -171,7 +172,7 @@ def main():
         pointer_events=False
     ).add_to(m)
 
-    # 3. FLOATING LEGEND
+    # 3. SAFETY LEGEND
     legend_html = '''
     <div style="position: fixed; bottom: 50px; left: 50px; width: 150px; background-color: white; 
     border:2px solid grey; z-index:9999; font-size:14px; padding: 10px; border-radius: 5px; color: black">
@@ -182,7 +183,7 @@ def main():
     </div>'''
     m.get_root().html.add_child(folium.Element(legend_html))
 
-    # 4. ROUTE RENDERING & METRICS
+    # 4. ROUTE RENDERING & NOTIFICATION DATA
     if st.session_state['routes']:
         selected_route_name = st.sidebar.selectbox(
             "Active Route View:", 
@@ -206,12 +207,13 @@ def main():
         c3.metric("Safety Score", f"{active_r['safety_probability']:.2f}")
         c4.metric("Status", active_r['safety_classification'])
 
+    # Markers for start, end, and detected problems
     if st.session_state['start_node']:
         folium.Marker(get_node_coords(G, st.session_state['start_node']), icon=folium.Icon(color='green', icon='play', prefix='fa')).add_to(m)
     if st.session_state['end_node']:
         folium.Marker(get_node_coords(G, st.session_state['end_node']), icon=folium.Icon(color='red', icon='stop', prefix='fa')).add_to(m)
     
-    # Hazard Marker logic with safety check
+    # User notification for detected hazard on path
     if st.session_state.get('hazard') and st.session_state.get('routes'):
         current_selection = st.session_state.get('active_route_selection', "Route 1")
         viewing_idx = int(current_selection.split()[-1]) - 1
@@ -226,7 +228,7 @@ def main():
 
     map_data = st_folium(m, width=None, height=600, use_container_width=True, key="nav_map")
     
-    # Click processing
+    # Map Interactivity
     if map_data.get('last_clicked'):
         clicked_node, _ = find_nearest_node(G, map_data['last_clicked']['lat'], map_data['last_clicked']['lng'])
         if st.session_state['start_node'] is None:
@@ -236,26 +238,58 @@ def main():
             st.session_state['end_node'] = clicked_node
             st.rerun()
 
-    # Hazard Simulation Logic with safety checks
+    # ============================================================================
+    # REAL-TIME ADAPTATION & NOTIFICATION
+    # ============================================================================
     st.markdown("---")
     if st.session_state['routes']:
         current_selection = st.session_state.get('active_route_selection', "Route 1")
         current_idx = int(current_selection.split()[-1]) - 1
         current_route = st.session_state['routes'][current_idx]
         
+        # Hazard Simulation & Re-calculation logic
+        col1, col2 = st.columns(2)
+        
         if current_route['safety_classification'] in ['Possibly Hazardous', 'Hazardous']:
-            if st.button(f"🎲 Simulate Hazard on {current_selection}"):
+            if col1.button(f"🎲 Simulate Problem on {current_selection}", use_container_width=True):
                 path = current_route['path']
                 if len(path) > 1:
                     i = random.randint(0, len(path) - 2)
                     u, v = path[i], path[i+1]
+                    
+                    # Store existing distance before weight update for delay notification
+                    st.session_state['old_distance'] = current_route['actual_distance']
+                    
+                    # REQUIREMENT: Update graph weights based on new information
+                    G[u][v]['safety_penalty'] = 5.0
+                    G[u][v]['weight'] = G[u][v]['raw_distance'] * 10
+                    
                     st.session_state['hazard'] = {'edge': (u, v), 'route_idx': current_idx}
-                    st.warning(f"🚨 Hazard simulated on {current_selection}!")
+                    st.warning(f"🚨 ALERT: Problem detected on {current_selection}! Dynamic re-routing available.")
                     st.rerun()
         else:
-            st.info("✅ This route is classified as Safe. No hazards available for simulation.")
+            col1.info("✅ This route is currently Safe.")
+
+        # REQUIREMENT: Provide alternative route suggestions and estimated time savings/delays
+        if st.session_state.get('hazard'):
+            if col2.button("🔄 Re-calculate Shortest Safe Route", type="primary", use_container_width=True):
+                new_routes = find_alternative_routes(G, st.session_state['start_node'], st.session_state['end_node'], k=num_routes, algorithm=algorithm)
+                
+                # Notification logic for delays/savings
+                new_dist = new_routes[0]['actual_distance']
+                diff = new_dist - st.session_state['old_distance']
+                
+                if diff > 0:
+                    st.sidebar.error(f"⚠️ Re-routed: Added {diff:.0f}m to avoid hazard.")
+                else:
+                    st.sidebar.success(f"✅ Re-routed: Found a safer path with {abs(diff):.0f}m savings.")
+                
+                st.session_state['routes'] = new_routes
+                st.session_state['hazard'] = None # Clear hazard once re-routed
+                st.rerun()
+
     else:
-        st.info("Calculate a route first to enable hazard controls.")
+        st.info("Select Start and End nodes on the map to begin.")
 
 if __name__ == "__main__":
     main()
